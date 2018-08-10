@@ -1,6 +1,9 @@
 from os import path
 from exceptions import *
 import sys
+import pickle
+
+##### INITIALIZATION FUNCTIONS #####
 
 # Define what the sequence files are
 SEQ_PATH = "./sequences/"
@@ -20,6 +23,7 @@ def check_seqs(nomodel,nopdb):
                                                         x,
                                                         SEQ_PATH)
 
+# These are the names of the all files that will be written to
 outfiles = dict()
 def define_output(varfilename):
     global outfiles
@@ -28,9 +32,13 @@ def define_output(varfilename):
         'skipped': basefile+".skipped",
         'alignments': basefile+".alignments",
         'conversions': basefile+".conversions",
-        'failures': basefile+".failures"}
+        'failures': basefile+".failures",
+        'completed': basefile+".completed"}
 
-def process_variants(varfilename,expand):
+##### VARIANT PARSING #####
+
+# Read in the variant file
+def process_variants(varfilename,expand,continue_flag):
     # Try to open the file
     try:
         infile = open(varfilename)
@@ -38,12 +46,13 @@ def process_variants(varfilename,expand):
         sys.exit("Unable to open {}: {}".format(varfilename,e))
     # Try to parse it
     try:
-        variants = parse_varfile(infile,expand)
+        variants = parse_varfile(infile,expand,continue_flag)
     except ParseException as e:
         print "Critical failure:"
         sys.exit(e.fullmsg)
     return variants
 
+# Process a single variant line
 def process_variant(variant,expand):
     '''
     If expand is set:
@@ -58,11 +67,11 @@ def process_variant(variant,expand):
         return ["no uniprot assigned"]
     annotation = variant[0].upper().replace(" ","_")
     # Anything can pair with NMD so skip those immediately
-    if "NMD" or "NONSENSE_MEDIATED_DECAY" in annotation:
+    if "NMD" in annotation or "NONSENSE_MEDIATED_DECAY" in annotation:
         return ["NMD variant"]
     try:
         position = variant[2]
-        refaa,altaa = var.split("/")
+        refaa,altaa = variant[3].split("/")
         # TODO: Remove this line if one day desire synonymous mapping 
         if refaa==altaa:
             return ["refaa equals altaa"]
@@ -79,36 +88,36 @@ def process_variant(variant,expand):
                 #TODO: Adjust these checks if one day desire synonymous mapping
                 if refaa[0]==altaa[0]:
                     refaa,altaa = refaa[1],altaa[1]
-                    position = position2
+                    position = int(position2)
                 #TODO: Adjust this part if one day desire DNP or TNP
                 else:
                     refaa,altaa = refaa[0],altaa[0]
-                    position = position1                    
+                    position = int(position1)
             # Anything else is a bad missense and outputs warning and skips
             else:
                 raise ValueError
         # Stop losses and changes to start can't be mapped
-        elif "STOP_LOST" or "STOPLOST" in annotation:
+        elif "STOP_LOST" in annotation or "STOPLOST" in annotation:
             return ["stop loss variant"]
         elif "START" in annotation:
             return ["variant affects start"]
         # Only keep the rest if expand is set
         elif not expand:
-            return ["expand set to false"]
+            return ["expand not set"]
         # Make sure the inframe deletion can be used
         elif "INFRAME_DELETION" in annotation:
             if len(altaa)>1:
                 raise ValueError
-        position = int(position)   
     except ValueError:
         raise ParseWarning(
-            "variant file","bad variant column: {}".format(var))               
+            "variant file","bad variant column: {}".format(variant[3]))               
     except ParseWarning as e:
         print e.fullmsg
-        return [e.msg]
-    return [position,refaa,altaa,annotation]
+        return [e.fullmsg]
+    return [position,refaa,altaa]
     
-def parse_varfile(varfile,expand):
+# Iterate through variant lines    
+def parse_varfile(varfile,expand,continue_flag):
     '''
     Parses variant file. Checks for format adherence.
     Returns a dictionary of variants with entries:
@@ -132,6 +141,10 @@ def parse_varfile(varfile,expand):
     KEY = variant identifier (transcript or protein)
     ENTRY = [[uniprot, isoform],[list of variants]]
     '''
+    completed = list()
+    if continue_flag and path.isfile(outfiles['completed']):
+        with open(outfiles['completed']) as infile:
+            completed = [x.strip() for x in infile]
     skipped = list()
     variants = dict()
     count = 0
@@ -169,6 +182,7 @@ def parse_varfile(varfile,expand):
                                    var,
                                    protein,
                                    unp])
+            if continue_flag and varcode in completed: continue                               
             current_var = process_variant(line,expand)           
             #Use ENST identifier if its ensembl otherwise protein identifier
             identifier = line[1] if line[1].startswith("ENST") else line[4]
@@ -179,12 +193,54 @@ def parse_varfile(varfile,expand):
             skipped.append("\t".join(line+current_var))
         elif identifier in variants:
             count += 1
-            variants[identifier].append(current_var)
+            variants[identifier].append(current_var+[varcode])
         else:
             count += 1
-            variants[identifier] = [[unp,iso],[current_var]]
+            variants[identifier] = [[unp,iso],[current_var+[varcode]]]
     print "{} variants processed".format(count)
     if len(skipped)>0:
         with open(outfiles['skipped'],'w') as outfile:
             outfile.write("\n".join(skipped))
+            outfile.write("\n")
         print "{} variants skipped".format(len(skipped))
+    return variants
+
+##### PICKLE LOADING #####
+
+def open_seqfile(filename):
+    filename = SEQ_PATH+filename
+    try:
+        infile = open(filename)
+    except IOError:
+        sys.exit("Failed to open {}".format(filename))
+    return infile
+            
+# Load the transcript sequences
+def load_transcripts():
+    infile = open_seqfile(TRANS_SEQ)
+    trans = pickle.load(infile)
+    print "loaded {} transcript sequences".format(len(trans))
+    return trans
+    
+# Load the sequences required for PDB casting
+def load_uniprot():
+    infile = open_seqfile(UNP_SEQ)
+    unp = pickle.load(infile)
+    print "loaded {} uniprots".format(len(unp))
+    return unp
+
+def load_sifts():
+    infile = open_seqfile(SIFTS_SEQ)
+    sifts = pickle.load(infile)
+    print "loaded {} sifts uniprots".format(len(sifts))
+    return sifts
+
+# Load model mappings
+def load_models(source):
+    if source=="swissmodel":
+        infile = open_seqfile(SWISS_SEQ)
+        models = pickle.load(infile)
+        print "loaded {} swissmodel uniprots".format(len(models))
+    else:
+        sys.exit("Critical: unrecognized model-type {}".format(source))
+    return models
