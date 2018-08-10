@@ -6,11 +6,12 @@ import pickle
 ##### INITIALIZATION FUNCTIONS #####
 
 # Define what the sequence files are
-SEQ_PATH = "./sequences/"
-SWISS_SEQ = "swissmodel.pickle"
-UNP_SEQ = "unp.pickle"
-TRANS_SEQ = "trans.pickle"
-SIFTS_SEQ = "sifts.pickle"
+SEQ_PATH = "./sequences/" # Where pickles are
+SWISS_SEQ = "swissmodel.pickle" # Model mapping
+UNP_SEQ = "unp.pickle" # Uniprot sequences
+TRANS_SEQ = "trans.pickle" # Transcript sequences
+SIFTS_SEQ = "sifts.pickle" # uniprot - pdb mapping
+SIFTS_PATH = "/dors/capra_lab/data_clean/sifts/xml/" # Where sifts alignments are
 
 # Ensure that the required sequence pickles are available
 def check_seqs(nomodel,nopdb):
@@ -22,6 +23,11 @@ def check_seqs(nomodel,nopdb):
                                                         SEQ_PATH,
                                                         x,
                                                         SEQ_PATH)
+    if not nopdb:
+        assert path.isdir(SIFTS_PATH), "{} not found. "\
+                                   "sifts dataset required for PDB".format(
+                                                                    SIFTS_PATH)
+                                                                               
 
 # These are the names of the all files that will be written to
 outfiles = dict()
@@ -34,6 +40,23 @@ def define_output(varfilename):
         'conversions': basefile+".conversions",
         'failures': basefile+".failures",
         'completed': basefile+".completed"}
+
+# These are the header and column formats for output
+# For models, the unp columns will be NA and therefore
+# filtering out models will require uniprot_position=="NA" filter
+CONV_HEADER = ["transcript","uniprot","isoform",
+               "transcript_identity", "transcript_position",
+               "uniprot_position", "structure_position", "icode",
+               "transcript_aa", "uniprot_aa", "structure_aa",
+               "ref_aa", "alt_aa", "structure_identity",
+               "structure", "chain"]
+
+ALN_HEADER = ["transcript","uniprot","isoform",
+              "transcript_identity", "transcript_position",
+              "uniprot_position","structure_position",
+              "transcript_aa","uniprot_aa","structure_aa",
+              "structure_identity","structure","chain"]
+                             
 
 ##### VARIANT PARSING #####
 
@@ -193,7 +216,7 @@ def parse_varfile(varfile,expand,continue_flag):
             skipped.append("\t".join(line+current_var))
         elif identifier in variants:
             count += 1
-            variants[identifier].append(current_var+[varcode])
+            variants[identifier][1].append(current_var+[varcode])
         else:
             count += 1
             variants[identifier] = [[unp,iso],[current_var+[varcode]]]
@@ -244,3 +267,22 @@ def load_models(source):
     else:
         sys.exit("Critical: unrecognized model-type {}".format(source))
     return models
+
+##### PDB LOADING #####
+
+
+#### OUTPUT WRITING #####
+
+def write_failures(source,msg,lock=None):
+    '''
+    Writes any failures encountered during variant alignment
+    and tries to assign reason with msg
+    recieves lock that is not none when multiproc
+    '''
+    outmsg = "{}\t{}\n".format("\t".join(source),msg)
+    if lock:
+        lock.acquire()
+    with open(outfiles['failures'],'a+') as outfile:
+        outfile.write(outmsg)
+    if lock:
+        lock.release()               

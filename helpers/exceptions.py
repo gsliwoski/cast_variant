@@ -13,4 +13,10 @@ class ParseWarning(Exception):
         self.source = source
         self.msg =  msg
         self.fullmsg = "Warning: parsefail in {}: {}".format(source,msg)
-        
+
+class AlignException(Exception):
+    def __init__(self, source, msg):
+        self.args = (source, msg)
+        self.source = source
+        self.msg = msg
+        self.fullmsg = "{} failed align: {}".format(source, msg)        
