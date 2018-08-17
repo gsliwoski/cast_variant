@@ -4,7 +4,7 @@ from os import path
 import sys
 from helpers.exceptions import *
 from helpers.IO import *
-from helpers.alignments import cast_to_pdbs,cast_to_models
+from helpers.alignments import cast_to_pdbs,cast_to_models,filter_sequences
 
 # Define the sequence files as those previously pickled
 # If you changed the filenames output from 
@@ -59,17 +59,19 @@ transcripts = load_transcripts()
 if not args.nopdb:
     uniprot = load_uniprot()
     sifts = load_sifts()
-    aln_out, conv_out,succ = cast_to_pdbs(variants,
-                                          transcripts,
-                                          uniprot,
-                                          sifts,
-                                          args.num_procs)
+    # Filter any variants for which a sequence couldn't be found
+    variants = filter_sequences(variants,transcripts,uniprot)
+    succ = cast_to_pdbs(variants,
+                        transcripts,
+                        uniprot,
+                        sifts,
+                        args.num_procs,
+                        args.expand)
 print "{} transcripts successfully aligned".format(succ)
 # Load the desired model tables if necessary
 if not args.nomodel:
     models = load_models("swissmodel")
-    cast_to_models(variants, transcripts, models, args.num_procs)
-# Cast to PDBs
+    cast_to_models(variants, transcripts, models, args.num_procs,args.expand)
 
 
 #x = 0

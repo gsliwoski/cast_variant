@@ -1,7 +1,12 @@
 from os import path
 from exceptions import *
+import gzip
 import sys
 import pickle
+import xml.etree.ElementTree as ET
+import traceback
+from AA import *
+import pandas as pd
 
 ##### INITIALIZATION FUNCTIONS #####
 
@@ -11,7 +16,7 @@ SWISS_SEQ = "swissmodel.pickle" # Model mapping
 UNP_SEQ = "unp.pickle" # Uniprot sequences
 TRANS_SEQ = "trans.pickle" # Transcript sequences
 SIFTS_SEQ = "sifts.pickle" # uniprot - pdb mapping
-SIFTS_PATH = "/dors/capra_lab/data_clean/sifts/xml/" # Where sifts alignments are
+SIFTS_PATH = "/dors/capra_lab/data_clean/sifts/2018-08-08/xml/" # Where sifts alignments are
 
 # Ensure that the required sequence pickles are available
 def check_seqs(nomodel,nopdb):
@@ -37,7 +42,7 @@ def define_output(varfilename):
     outfiles = {
         'skipped': basefile+".skipped",
         'alignments': basefile+".alignments",
-        'conversions': basefile+".conversions",
+        'variants': basefile+".variants",
         'failures': basefile+".failures",
         'completed': basefile+".completed"}
 
@@ -45,14 +50,14 @@ def define_output(varfilename):
 # For models, the unp columns will be NA and therefore
 # filtering out models will require uniprot_position=="NA" filter
 CONV_HEADER = ["transcript","uniprot","isoform",
-               "transcript_identity", "transcript_position",
+               "transcript_identity","transcript_position",
                "uniprot_position", "structure_position", "icode",
                "transcript_aa", "uniprot_aa", "structure_aa",
                "ref_aa", "alt_aa", "structure_identity",
-               "structure", "chain"]
+               "structure", "chain","varcode"]
 
 ALN_HEADER = ["transcript","uniprot","isoform",
-              "transcript_identity", "transcript_position",
+              "transcript_identity","transcript_position",
               "uniprot_position","structure_position",
               "transcript_aa","uniprot_aa","structure_aa",
               "structure_identity","structure","chain"]
@@ -103,7 +108,7 @@ def process_variant(variant,expand):
         if "missense" in variant[0]:
             # Your standard missense nothing needs to change
             if len(refaa)==1 and len(altaa)==1:
-                pass              
+                position=int(position)
             # Sometimes VEP will give AA/AB or AA/BA as missense
             # with position 1-2 instead of 1 or 2
             elif len(refaa)==2 and len(altaa)==2:
@@ -205,6 +210,8 @@ def parse_varfile(varfile,expand,continue_flag):
                                    var,
                                    protein,
                                    unp])
+
+            
             if continue_flag and varcode in completed: continue                               
             current_var = process_variant(line,expand)           
             #Use ENST identifier if its ensembl otherwise protein identifier
@@ -220,6 +227,7 @@ def parse_varfile(varfile,expand,continue_flag):
         else:
             count += 1
             variants[identifier] = [[unp,iso],[current_var+[varcode]]]
+    print variants
     print "{} variants processed".format(count)
     if len(skipped)>0:
         with open(outfiles['skipped'],'w') as outfile:
@@ -268,9 +276,109 @@ def load_models(source):
         sys.exit("Critical: unrecognized model-type {}".format(source))
     return models
 
-##### PDB LOADING #####
+##### SIFTS LOADING #####
 
+def parse_sifts(pdb):
+    '''
+    Parses a sifts xml for a given pdbid
+    Takes a pdb that is a list of [structid,chain]
+    Returns a dict of all the residues in the pdb
+    '''
+#    print pdb
+    structure,chain = pdb
+    residues = {'structure': structure,
+                'chain': list(),
+                'structure_position': list(),
+                'icode': list(),
+                'structure_aa': list(),
+                'uniprot_position': list(),
+                'secondary_structure': list(),
+                'uniprot': list()}
+                
+    total_res = 0
+    id_res = 0
+    pdbfile = SIFTS_PATH+structure+".xml.gz"
+    try:
+        infile = gzip.open(pdbfile)
+    except:
+        raise AlignException("parse_sifts", "failed to open {}".format(filename))
+    try:
+        # SIFTS files should be XML so parse into table
+        root = ET.parse(infile).getroot()
 
+        # Remove the namespace from tags
+        for elem in root.getiterator():
+            if not hasattr(elem.tag,'find'): continue
+            i = elem.tag.find('}')
+            if i >= 0:
+                elem.tag = elem.tag[i+1:]
+        
+        # Iterate over all PDB chains
+        for chain in root.findall("entity"):
+            if chain.get("type") == "protein":
+                # Iterate over annotation segments
+                for s in chain.getchildren():
+                    # Iterate over segment residues
+                    for residue in s.find("listResidue"):
+                        # Parse residue annotations
+                        res = {'chain': "",
+                               'structure_position': None,
+                               'icode': "",
+                               'structure_aa': "",
+                               'uniprot_position':None,
+                               'secondary_structure':"",
+                               'uniprot':""}
+                        nullres = False
+                        for db in residue.findall("crossRefDb"):
+                            if db.get("dbSource") == "UniProt":
+                                res['uniprot'] = db.get("dbAccessionId")                                                                    
+                            if db.get("dbSource") == "PDB":
+                                res['chain'] = db.get("dbChainId")
+                                res['structure_position'] = db.get("dbResNum")
+                                if res["structure_position"] == "null":
+                                    nullres = True
+                                try: # Check for insertion code
+                                    int(res["structure_position"][-1])
+                                except ValueError:
+                                    res["icode"] = res["structure_position"][-1]
+                                    res["structure_position"] = res["structure_position"][:-1]
+                                try: # Try converting to single letter AA
+                                    res["structure_aa"] = AA[db.get("dbResName")]
+                                except KeyError:
+                                    try: # Try converting noncanonical AA to canonical
+                                        res["structure_aa"] = AA[MODRES[db.get("dbResName")]]
+                                    except KeyError:
+                                        res["structure_aa"] = "X" # Can't resolve AA letter
+                            elif db.get("dbSource") == "UniProt":
+                                res["uniprot_position"] = db.get("dbResNum")
+                                res["uniprot_aa"] = db.get("dbResName")
+                        for rd in residue.findall("residueDetail"):
+                            if rd.get("property") == "codeSecondaryStructure":
+                                res['secondary_structure'] = rd.text
+                        if not nullres and \
+                               res['structure_position'] is not None and \
+                               res['uniprot_position'] is not None:
+                            res['uniprot_position'] = int(res['uniprot_position'])
+                            total_res += 1
+                            if res["uniprot_aa"] == res["structure_aa"]:
+                                id_res += 1
+                            for x in ['chain',
+                                      'structure_position',
+                                      'icode',
+                                      'structure_aa',
+                                      'uniprot_position',
+                                      'secondary_structure',
+                                      'uniprot']:
+                                residues[x].append(res[x])
+    except Exception:       
+        raise AlignException("sifts parse",traceback.format_exc())
+    finally:
+        infile.close()
+    if len(residues["chain"]) == 0:
+        print "Warning, no usable residues in {}".format(pdbfile)
+    residues["structure_identity"] = float(id_res)/total_res
+    return residues
+            
 #### OUTPUT WRITING #####
 
 def write_failures(source,msg,lock=None):
@@ -285,4 +393,91 @@ def write_failures(source,msg,lock=None):
     with open(outfiles['failures'],'a+') as outfile:
         outfile.write(outmsg)
     if lock:
-        lock.release()               
+        lock.release()
+
+def generate_alignment_table(uniprot,structures):
+    '''
+    Generate the alignment dataframe
+    Translates sequences into lists
+    Merges the transcript and structure alignments
+    '''
+    uniprot['uniprot_aa'] = [x for x in uniprot['uniprot_aa']]
+    uniprot['transcript_aa'] = [x for x in uniprot['transcript_aa']]
+    uniprot.pop('fasta')
+    alignment_table = pd.DataFrame.from_dict(uniprot)
+#    alignment_table.to_csv(open("tempaln",'a'))
+    alignment_table = alignment_table.merge(structures,
+                                            how="left",
+                                            on=['uniprot_position'])
+#    structures.to_csv(open("tempstruct","a"))
+#    alignment_table.to_csv(open("tempaln2","a"))
+    alignment_table = alignment_table.round({
+                                'transcript_identity':1,
+                                'structure_identity':1})
+    
+    alignment_table.sort_values(by=["structure","chain","transcript_position",
+                                    "structure_position","icode"],inplace=True)
+    return alignment_table
+
+def generate_variant_table(variant_list):
+    '''
+    Generates a variant dataframe
+    from a variant list
+    '''
+    variant_dict = {'transcript_position': [x[0] for x in variant_list],
+                    'ref_aa': [x[1] for x in variant_list],
+                    'alt_aa': [x[2] for x in variant_list],
+                    'varcode': [x[3] for x in variant_list]}
+    variant_df = pd.DataFrame.from_dict(variant_dict)
+#    variant_df.to_csv(open("tempvar","a"))
+    return variant_df
+            
+def generate_conversion_table(alignment_table,variant_table):
+    '''
+    Intersects alignment table with variant table
+    '''
+    conv_table = alignment_table.merge(variant_table,
+                                       how='inner',
+                                       on=['transcript_position'])
+    # Filter any variants that were not on a structure
+    conv_table = conv_table[pd.notnull(conv_table["structure"])]
+    # Group structures and sort residues
+    conv_table.sort_values(by=["structure","chain","transcript_position",
+                               "structure_position","icode","ref_aa"],inplace=True)
+
+
+    return conv_table
+
+def write_output(align_out,conv_out):
+    aout = outfiles['alignments']
+    if path.isfile(aout):
+        align_out.to_csv(
+            open(aout,'a'),
+            header=False,
+            index=False,
+            sep="\t",
+            columns=ALN_HEADER)
+    else:
+        align_out.to_csv(
+            open(aout,'w'),
+            index=False,
+            sep="\t",
+            columns=ALN_HEADER)
+    cout = outfiles['variants']
+    if path.isfile(cout):
+        conv_out.to_csv(
+            open(cout,'a'),
+            header=False,
+            index=False,
+            sep="\t",
+            columns=CONV_HEADER)
+    else:
+        conv_out.to_csv(
+            open(cout,'w'),
+            index=False,
+            sep="\t",
+            columns=CONV_HEADER)
+
+def write_complete(varcodes):
+    with open(outfiles["completed"],"a+") as outfile:
+        outfile.write("\n".join(varcodes)+"\n")                   

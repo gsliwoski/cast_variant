@@ -195,9 +195,9 @@ def parse_sifts(siftsfile,target):
             if len(line)<3: continue
             pdbid,chain,unp = line[:3]
             if unp in target:
-                target[unp].append([pdbid,chain])
+                target[unp].add((pdbid,chain))
             else:
-                target[unp] = [[pdbid,chain]]
+                target[unp] = set([(pdbid,chain)])
 
 def check_skip(destination):
     '''Checks if pickle is already there.
