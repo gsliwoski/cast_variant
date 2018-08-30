@@ -63,6 +63,9 @@ Consequence ENST#   Position    Amino\_acids(R/A)    ENSP#   Uniprot Uniprot-iso
 3. Homo_sapiens.GRCh38.pep.all.fa.gz = FASTA of all human protein sequences from ENSEMBL (put in /sequences/)
 4. pdb_chain_uniprot.tsv.gz = Summary file from SIFTS that lists all alignments in SIFTS (put in /sequences/)
 5. uniprot_sprot.fasta.gz = FASTA of all canonical human protein sequences from Uniprot (put in /sequences/)
+6. refseq_mammalian.fasta.gz = fasta of all refseq sequences
+
+Note: See /sequences/downloading_datasets.txt for more information
 
 **Run:**
 ```
