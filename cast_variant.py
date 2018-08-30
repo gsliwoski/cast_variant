@@ -4,7 +4,8 @@ from os import path
 import sys
 from helpers.exceptions import *
 from helpers.IO import *
-from helpers.alignments import cast_to_pdbs,cast_to_models,filter_sequences
+from helpers.alignments import filter_sequences
+from helpers.workers import cast_variants
 
 # Define the sequence files as those previously pickled
 # If you changed the filenames output from 
@@ -28,8 +29,10 @@ parser.add_argument('--nopdb','-p', action='store_true',
                     help='do not cast to PDB structures')
 parser.add_argument('--nomodel','-m', action='store_true',
                     help='do not cast to SWISSMODEL structures')
-parser.add_argument('--completed','-c',action='store_true',default=True,
-                    help='allow for continuing later with completed file')
+parser.add_argument('--nouniprot','-u',action='store_true',
+                    help = 'do not cast to uniprot sequence. Only matters with models.')                    
+parser.add_argument('--completed','-c',action='store_false',default=True,
+                    help='suppress continuing later through completed file')
 parser.add_argument('--num_procs','-n',type=int,default=1,
                     help='number of processes to run at once (default 1)')                                                                               
 
@@ -43,7 +46,11 @@ check_seqs(args.nomodel,args.nopdb)
 # Define the names of the output files based on input filename
 define_output(args.variants)
 # Read in the variant dict
-variants = process_variants(args.variants,args.expand,args.completed)
+variants = load_variants(args.variants,args.expand)
+# Filter out completed variants if set
+if args.completed:
+    variants = filter_complete(variants)
+
 try:
     if len(variants.keys())==0:
         raise ParseException("variants_file","No usable variants, check for a skipped file.")
@@ -52,26 +59,45 @@ except ParseException as e:
 #print variants
 
 # Load the necessary sequence sets
+# After loading each sequence set filter variants that
+# don't have the necessary sequence
+# 
 print "loading necessary datasets"
 transcripts = load_transcripts()
 
-# Cast to PDBs
-if not args.nopdb:
-    uniprot = load_uniprot()
-    sifts = load_sifts()
-    # Filter any variants for which a sequence couldn't be found
-    variants = filter_sequences(variants,transcripts,uniprot)
-    succ = cast_to_pdbs(variants,
-                        transcripts,
-                        uniprot,
-                        sifts,
-                        args.num_procs,
-                        args.expand)
-print "{} transcripts successfully aligned".format(succ)
-# Load the desired model tables if necessary
-if not args.nomodel:
-    models = load_models("swissmodel")
-    cast_to_models(variants, transcripts, models, args.num_procs,args.expand)
+datasets = {'transcripts':transcripts,
+            'uniprots':None,
+            'models':None,
+            'sifts':None}
+
+variants,earlycomp = filter_sequences(variants,'transcripts',datasets)
+
+try:
+    if len(variants.keys())==0:
+        raise ParseException("variants_file","No usable variants, check for a skipped file.")
+except ParseException as e:
+    sys.exit(e.fullmsg)  
+
+if not (args.nouniprot and args.nopdb):
+    datasets['uniprots'] = load_uniprot()
+    variants,ec = filter_sequences(variants,'uniprots',datasets)
+    earlycomp += ec
+try:
+    if len(variants.keys())==0:
+        raise ParseException("variants_file","No usable variants, check for a skipped file.")
+except ParseException as e:
+    sys.exit(e.fullmsg)  
+    
+if args.completed and len(earlycomp)>0:
+    write_complete(earlycomp)
+
+if not (args.nopdb):
+    datasets['sifts'] = load_sifts()
+if not (args.nomodel):
+    datasets['models'] = load_models("swissmodel")
+
+succ = cast_variants(variants,datasets,args)
+print "Complete: {} transcripts successfully aligned".format(succ)
 
 
 #x = 0

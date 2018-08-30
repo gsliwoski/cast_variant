@@ -5,269 +5,210 @@ from exceptions import *
 import IO
 import traceback
 import pandas as pd
-
-##### MISC #####
+import copy
 
 # Alignment parameters
 GAP_OPEN = -10
-GEP_EXTEND = -0.5
+GAP_EXTEND = -0.5
 MATRIX = matlist.blosum62
 
-def align(seq1, seq2):
+# Main alignment class
+class Alignment(object):
     '''
-    Aligns two sequences and returns one alignment
+    Main alignment object starts with 2 sequences and aligns them
+    Then can populate either side of alignment with different sequences
+    such as numbering and icodes that are adjusted to account for gaps
+    Can also get identity and final dataframe
     '''
-    try:
-        if seq1==seq2:
-            aligns = [seq1,seq2]
-        else:
-            aligns = pairwise2.align.globalds(
+    def __init__(self, seq1, seq2, name1='raw1', name2='raw2'):
+        self.identical = seq1==seq2
+        self.left_name = name1
+        self.right_name = name2
+        self.left_sequence = dict()
+        self.right_sequence = dict()
+        self.matches = 0
+        self._df = None
+        self._dict = None
+        self.gap_open = GAP_OPEN
+        self.gap_extend = GAP_EXTEND
+        self.matrix = MATRIX
+        self.current = False # df up-to-date?
+        if self.left_name == self.right_name:
+            raise AlignException("pairwise aln failed",
+                                 "provided identifiers can't be identical")
+        
+        self.left_sequence['nAA'] = len([x for x in seq1 if x!="-"])
+        self.right_sequence['nAA'] = len([x for x in seq2 if x!="-"])
+        seq1 = seq1.replace("-","X")
+        seq2 = seq2.replace("-","X")
+        try:
+            if self.identical:
+                self.left_sequence['aligned'] = [x for x in seq1]
+                self.right_sequence['aligned'] = [x for x in seq2]
+                self.matches = len(seq1)
+            else:
+                l,r = pairwise2.align.globalds(
                                              seq1,
                                              seq2,
                                              MATRIX,
                                              GAP_OPEN,
                                              GAP_EXTEND,
                                              one_alignment_only = True)[0][:2]
-    except Exception as e:
-        raise AlignException("pairwise aln failed",
-                             ":".join("{}".format(x) for x in [e,e.args]))
-    return aligns
+                self.left_sequence['aligned'] = [x for x in l]
+                self.right_sequence['aligned'] = [x for x in r]
+                for x,y in zip(l,r):
+                    if x==y and x!="-":
+                        self.matches += 1
+        except Exception as e:
+            raise AlignException("pairwise aln failed",
+                                 ":".join("{}".format(x) for x in [e, e.args]))
+        
+        self.x_to_dash()
+                                    
+    def add(self, sequence, side, name=None):
+        '''
+        Adds a sequence to a given side of the alignment
+        accounting for gaps as "-" in the alignment sequence
+        Takes sequence that is either string or list
+        and a side ("left" or "right")
+        and a name for the column header
+        and adds to the dict of that column header
+        Returns nothing
+        '''
+        currentseq = self.left_sequence if side=="left" else self.right_sequence
+        naa = currentseq['nAA']
+        if naa!=len(sequence):
+            raise AlignException("adding to aln failed",
+                  "adding alignment with {} AA's a seq of length {}".format(
+                                                                      naa,
+                                                                      len(sequence)))
+        if name is None:
+                name = len(currentseq) + 1
+        if name in currentseq:
+            print "Warning, attempting to add sequence with name already\
+                  nothing added"
+            return None
+        if self.identical:
+            newseq = [x for x in sequence]
+        else:
+            newseq = list()
+            aln = currentseq['aligned']
+            i = -1
+            for x in aln:
+                if x!="-":
+                    i += 1
+                    newseq.append(sequence[i])
+                else:
+                    newseq.append(" ")                    
+        currentseq[name] = newseq
+        self.current = False
+        return None
 
-# TODO: Make this a df intersection instead
-# TODO: allowing you to get rid of t quickfix
-def number_alignment(seq1, seq2, num1=None, num2=None, trailer=None):
-    '''
-    Aligns sequence numbering with alignment to account for gaps
-    Takes two alignments and two residue numbering lists and returns
-    two new lists with " " for each gap
-    trailer is optional sequence to be adjusted with seq2 (icodes)
-    '''
-    # Sequences are alignments so must be same length
-    if len(seq1)!=len(seq2):
-        raise AlignException("number alignment","seq's not same length")
-    # If no resnums provided, assume they are 1 - length
-    if num1 is None:
-        num1 = range(1,len(seq1)+1)
-    if num2 is None:
-        num2 = range(1,len(seq2)+1)
-    if seq1==seq2 and len(seq1)==len(num1) and len(num1)==len(num2):
-        return (num1,num2,1.0,trailer)
-    aindex,bindex = -1,-1
-    anumbers = list()
-    bnumbers = list()
-    matches = 0
-    total = 0
-    t = list
-    trailer = [x for x in trailer] if trailer else None
-    try:
-        for x,y in zip(aseq,bseq):
-            if x!="-":
-                if x==y: matches += 1
-                if y!="-": total += 1
-                aindex += 1
-                current_a = anum[aindex]
+    def refresh_df(self):
+        '''
+        Refreshes the dataframe since I believe it's faster
+        to populate dict and remake df than to add columns to premade df
+        Before making the df, it looks at keys to see if any are identical
+        between the two sides. If so, adds a left/right to them
+        '''
+        newdict = dict()
+        lk = set(self.left_sequence.keys())
+        rk = set(self.right_sequence.keys())
+        sharedkeys = lk.intersection(rk)
+        for k in self.left_sequence.keys():                
+            if k == 'aligned':
+                newkey = "{}_aa".format(self.left_name)
+            elif k in sharedkeys:
+                newkey = "{}_left".format(k)
             else:
-                current_a = " "
-            if y!="-":
-                bindex += 1
-                current_b = bnum[bindex]
-                t = trailer.pop(0) if trailer else '-'
+                newkey = k
+            newdict[newkey] = self.left_sequence[k]
+        for k in self.right_sequence.keys():
+            if k == 'aligned':
+                newkey = "{}_aa".format(self.right_name)              
+            elif k in sharedkeys:
+                newkey = "{}_right".format(k)
             else:
-                current_b = " "
-                current_t = "-"
-            anumbers.append(current_a)
-            bnumbers.append(current_b)
-            t.append(current_t)
-    except IndexError as e:
-        raise AlignError("number_alignment index error",
-                         ":".join("{}".format(x) for x in [e,e.args]))
-    t = t if trailer else None
-    return (anumbers,bnumbers,float(matches)/total*100,t)
-   
-def aligner(seq1,seq2, num1=None, num2=None):
-    '''
-    Takes two sequences and residue number lists
-    and calls align and number align and returns
-    aligned sequences and residue numbers for each and identity
-    '''
-    aln1, aln2 = align(seq1, seq2)                                                              
-    renum1,renum2,identity,trailer = number_alignment(aln1,aln2,num1,num2)
-    return (aln1,aln2,renum1,renum2,identity,trailer)
+                newkey = k                            
+            newdict[newkey] = self.right_sequence[k]
+#        for x in newdict:
+#            if isinstance(newdict[x],int): continue
+#            print x,newdict[x],len(newdict[x])
+        self._dict = newdict            
+        self._df = pd.DataFrame.from_dict(newdict)
+        self.current = True
 
-def expand_variants(variants):
-    '''
-    Expands non-missense variants into 
-    all affected residues
-    '''
-    pass
+    def remove(name,side="both"):
+        '''
+        removes a given name from the selected side
+        takes name of key and side (left,right,both)
+        returns nothing
+        '''
+        if side=="left" or side=="both":
+            if name in self.left_sequence.keys():
+                self.left_sequence.pop(name)
+                self.current = False
+        if side=="right" or side=="both":
+            if name in self.right_sequence.keys():
+                self.right_sequence.pop(name)                                     
+                self.current = False
+                                            
+    def identity(self, side="left"):
+        '''
+        returns sequence identity depending on how it's defined
+        takes side (left[total is len left],right, outer[total is max len],
+        inner [total is min len]
+        return float
+        '''
+        if side=="left":
+            m = self.left_sequence['nAA']
+        elif side=="right":
+            m = self.right_sequence['nAA']
+        elif side=="outer":
+            m = max(self.left_sequence['nAA'],self.right_sequence['nAA'])
+        else:
+            m = min(self.left_sequence['nAA'],self.right_sequence['nAA'])
+        
+        return float(self.matches)/m
+        
+    @property
+    def df(self):
+        if self.current:
+            return self._df
+        else:
+            self.refresh_df()
+            return self._df
+    
+    @property
+    def dict(self):
+        if not self.current:
+            self.refresh_df()
+        return copy.deepcopy(self._dict)
 
-def filter_sequences(variants,transcripts,uniprot):
+    def x_to_dash(self):
+        '''
+        Replace any X in sequence with -
+        '''
+        for i in range(len(self.left_sequence['aligned'])):
+            if self.left_sequence['aligned'][i]=="X":
+                self.left_sequence['aligned'][i]="-"
+            if self.right_sequence['aligned'][i]=="X":
+                self.right_sequence['aligned'][i]="-"
+                
+                       
+def filter_sequences(variants,destination,datasets):
     filtered = dict()
+    completed = list()
     for var in variants:
-        if var not in transcripts:
+        varcodes = [x[-1] for x in variants[var][-1]]
+        if destination=='transcripts' and var not in datasets['transcripts']:
             IO.write_failures(
                 [var,variants[var][0][0]],"no seq found for {}".format(var))
-        elif variants[var][0][0] not in uniprot:
+            completed += varcodes
+        elif destination=='uniprots' and variants[var][0][0] not in datasets['uniprots']:
             IO.write_failures(
                 [var,variants[var][0][0]],"no seq found for {}".format(var[0][0]))
+            completed += varcodes
         else:
             filtered[var] = variants[var]
-    return filtered            
-
-                                                                        
-##### PDB #####
-   
-def pdb_worker(variant,transcripts,uniprots,sifts,multiproc,expand):
-    '''
-    Worker process, handles calls to alignments and calls to final output
-    Takes a current variant and True/False multiprocessing and returns nothing
-    '''
-    if multiproc:
-        lock = mp.Lock()
-    else:
-        lock = None
-    current_transcript, current_protein, variant_list = variant
-    failmsg = list()
-    try:
-        uniprot,isoform = current_protein
-        astring = "{}_{}".format(current_transcript,uniprot)
-        trans_seq = transcripts.get(current_transcript,"")
-        varcodes = set([x[3] for x in variant_list])
-        #TODO: these checks can probably be removed
-        if trans_seq == "":   
-            raise AlignException("{}".format(current_transcript),"no seq found")
-        unp_seq = uniprots.get(uniprot,"")
-        if unp_seq == "":
-            raise AlignException("{}".format(uniprot),"no seq found")
-        current_unp = {'fasta': unp_seq,
-                       'resnums': range(1,len(unp_seq)+1),
-                       'uniprot': uniprot,
-                       'isoform': isoform,
-                       'transcript': current_transcript}
-        trans_aln, unp_aln, trans_num, unp_num, identity,_ = aligner(
-                                                           trans_seq,
-                                                           unp_seq)  
-        current_unp['transcript_identity'] = identity
-        current_unp['transcript_aa'] = trans_aln
-        current_unp['transcript_position'] = trans_num
-        current_unp['uniprot_aa'] = unp_aln
-        current_unp['uniprot_position'] = unp_num
-        
-        # Get the sifts entries for this uniprot
-        pdbs = gather_sifts(uniprot, sifts)
-        if pdbs.shape[0]==0:    
-            raise AlignException("sifts parsing", "no residues returned")
-
-        #Expand variants if set
-        if expand:
-            expand_variants(variant)        
-        # Compile the output dataframes
-        aln_table = IO.generate_alignment_table(current_unp, pdbs)
-        
-        variant_table = IO.generate_variant_table(variant_list)
-        conv_table = IO.generate_conversion_table(aln_table, variant_table)
-        
-    except AlignException as e:
-        IO.write_failures([current_transcript,uniprot],e.fullmsg,lock)
-        if multiproc:
-            lock.acquire()
-        IO.write_complete(varcodes)
-        if multiproc:
-            lock.release()       
-        return False
-    except Exception:
-        IO.write_failures([current_transcript,uniprot],traceback.format_exc(),lock)
-        return False
-    # Safe-write the output
-    if multiproc:
-        lock.acquire()
-    IO.write_output(aln_table,conv_table)                                                
-    IO.write_complete(varcodes)
-    if multiproc:
-        lock.release()
-    print "{} complete.".format(astring)
-    return True
-    
-def init(l):
-    '''Shared lock initializer, used during pool init'''
-    global lock
-    lock = l
-
-def cast_to_pdbs(variants, transcripts, uniprot, sifts, nproc,expand):
-    if nproc>1:
-        l = mp.Lock()
-        pool = mp.Pool(processes=nproc,initializer=init,initargs=(l,))
-    results = list()
-    for x in variants.keys():
-        current_var = [x]+variants[x]
-        if nproc>1:
-            results.append(pool.apply_async(pdb_worker,
-                                       args = (current_var,
-                                               transcripts,
-                                               uniprot,
-                                               sifts,
-                                               True,
-                                               expand)))
-        else:
-            results.append(pdb_worker(current_var,
-                                      transcripts,
-                                      uniprot,
-                                      sifts,
-                                      False,
-                                      expand))
-    if nproc>1:
-            pool.close()
-            pool.join()
-            results = [x.get() for x in results]
-        
-    return sum(results)
-
-##### SIFTS #####
-
-# holds PDB entries from sifts alignments in case they are 
-# needed again to save time
-sifts_holder = dict()
-
-def gather_sifts(uniprot,sifts):
-    '''
-    Get all the sifts alignments for the given uniprot
-    Takes a string uniprot from the sifts dict
-    Returns pandas df of all the PDB residues for that uniprot
-    '''
-    pdbs = sifts.get(uniprot,None)
-
-    all_residues = None
-    if pdbs is None:
-        raise AlignException(
-              "sifts_lookup","no sifts entry for {}".format(uniprot))
-    #print "{} pdbs found for {}".format(len(pdbs),uniprot)
-    for pdb in pdbs:
-        residues = sifts_holder.get(pdb[0],None)
-        if residues is None:
-            residues = IO.parse_sifts(pdb)
-            if residues is None:
-                print "Warning, None returned when parsing sifts for {}".format(pdb)
-                continue
-            sifts_holder[pdb[0]] = residues
-        # TODO: improve?
-        # Store residues as dataframe and filter for relevant chain
-        resdf = pd.DataFrame.from_dict(residues)
-        # Filter for only the relevant chain
-        resdf = resdf[(resdf['chain'] == pdb[1]) &
-                      ((resdf["uniprot"] == uniprot) |
-                       (resdf["uniprot"] == ""))]
-        if len(resdf.index)==0:
-            continue
-        resdf.drop("uniprot",inplace=True,axis=1)
-        if all_residues is None:
-           all_residues = resdf
-        else:
-            all_residues = pd.concat([all_residues,resdf],copy=False)            
-    if all_residues is None:
-        all_residues = pd.DataFrame.from_dict(None)
-    all_residues.to_csv(open("tempstr","w"))
-    return all_residues
-##### MODELS #####
-    
-def cast_to_models(variants, transcripts, models):
-    pass
+    return (filtered,completed)

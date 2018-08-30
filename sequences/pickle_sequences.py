@@ -139,6 +139,8 @@ def parse_swissmodel(target,index,path):
                 start,end = line[5:7]
                 key = line[3]
                 acid,isoid = line[:2]
+                if isoid.strip()=="":
+                    isoid = "UNK"
                 if unp in models:
                     models[unp].append([acid,isoid,key,start,end])
                 else:

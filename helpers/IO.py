@@ -7,6 +7,8 @@ import xml.etree.ElementTree as ET
 import traceback
 from AA import *
 import pandas as pd
+from Bio import PDB
+import re
 
 ##### INITIALIZATION FUNCTIONS #####
 
@@ -44,29 +46,12 @@ def define_output(varfilename):
         'alignments': basefile+".alignments",
         'variants': basefile+".variants",
         'failures': basefile+".failures",
-        'completed': basefile+".completed"}
-
-# These are the header and column formats for output
-# For models, the unp columns will be NA and therefore
-# filtering out models will require uniprot_position=="NA" filter
-CONV_HEADER = ["transcript","uniprot","isoform",
-               "transcript_identity","transcript_position",
-               "uniprot_position", "structure_position", "icode",
-               "transcript_aa", "uniprot_aa", "structure_aa",
-               "ref_aa", "alt_aa", "structure_identity",
-               "structure", "chain","varcode"]
-
-ALN_HEADER = ["transcript","uniprot","isoform",
-              "transcript_identity","transcript_position",
-              "uniprot_position","structure_position",
-              "transcript_aa","uniprot_aa","structure_aa",
-              "structure_identity","structure","chain"]
-                             
+        'completed': basefile+".completed"}                           
 
 ##### VARIANT PARSING #####
 
 # Read in the variant file
-def process_variants(varfilename,expand,continue_flag):
+def load_variants(varfilename,expand):
     # Try to open the file
     try:
         infile = open(varfilename)
@@ -74,7 +59,7 @@ def process_variants(varfilename,expand,continue_flag):
         sys.exit("Unable to open {}: {}".format(varfilename,e))
     # Try to parse it
     try:
-        variants = parse_varfile(infile,expand,continue_flag)
+        variants = parse_varfile(infile,expand)
     except ParseException as e:
         print "Critical failure:"
         sys.exit(e.fullmsg)
@@ -145,7 +130,7 @@ def process_variant(variant,expand):
     return [position,refaa,altaa]
     
 # Iterate through variant lines    
-def parse_varfile(varfile,expand,continue_flag):
+def parse_varfile(varfile,expand):
     '''
     Parses variant file. Checks for format adherence.
     Returns a dictionary of variants with entries:
@@ -169,10 +154,6 @@ def parse_varfile(varfile,expand,continue_flag):
     KEY = variant identifier (transcript or protein)
     ENTRY = [[uniprot, isoform],[list of variants]]
     '''
-    completed = list()
-    if continue_flag and path.isfile(outfiles['completed']):
-        with open(outfiles['completed']) as infile:
-            completed = [x.strip() for x in infile]
     skipped = list()
     variants = dict()
     count = 0
@@ -212,7 +193,7 @@ def parse_varfile(varfile,expand,continue_flag):
                                    unp])
 
             
-            if continue_flag and varcode in completed: continue                               
+#            if continue_flag and "{}_{}".format(varcode, in completed: continue                               
             current_var = process_variant(line,expand)           
             #Use ENST identifier if its ensembl otherwise protein identifier
             identifier = line[1] if line[1].startswith("ENST") else line[4]
@@ -227,7 +208,6 @@ def parse_varfile(varfile,expand,continue_flag):
         else:
             count += 1
             variants[identifier] = [[unp,iso],[current_var+[varcode]]]
-    print variants
     print "{} variants processed".format(count)
     if len(skipped)>0:
         with open(outfiles['skipped'],'w') as outfile:
@@ -236,6 +216,27 @@ def parse_varfile(varfile,expand,continue_flag):
         print "{} variants skipped".format(len(skipped))
     return variants
 
+completed = list()
+def filter_complete(variants):
+    global completed
+    keptvars = dict()
+    if path.isfile(outfiles['completed']) and len(completed)==0:
+        with open(outfiles['completed']) as infile:
+            completed = [x.strip() for x in infile]
+    if len(completed)==0:
+        return variants
+    for trans in variants:
+        filtered = list()
+        for var in variants[trans][-1]:
+            varcode = var[-1]
+            if varcode in completed:
+                continue
+            else:
+                filtered.append(var)
+        if len(filtered)>0:
+            keptvars[trans] = [variants[trans][0],filtered]                
+    return keptvars
+    
 ##### PICKLE LOADING #####
 
 def open_seqfile(filename):
@@ -395,89 +396,89 @@ def write_failures(source,msg,lock=None):
     if lock:
         lock.release()
 
-def generate_alignment_table(uniprot,structures):
+def write_table(df, destination):
     '''
-    Generate the alignment dataframe
-    Translates sequences into lists
-    Merges the transcript and structure alignments
+    Writes pandas table to destination
+    takes a [[df,headers],destination]
     '''
-    uniprot['uniprot_aa'] = [x for x in uniprot['uniprot_aa']]
-    uniprot['transcript_aa'] = [x for x in uniprot['transcript_aa']]
-    uniprot.pop('fasta')
-    alignment_table = pd.DataFrame.from_dict(uniprot)
-#    alignment_table.to_csv(open("tempaln",'a'))
-    alignment_table = alignment_table.merge(structures,
-                                            how="left",
-                                            on=['uniprot_position'])
-#    structures.to_csv(open("tempstruct","a"))
-#    alignment_table.to_csv(open("tempaln2","a"))
-    alignment_table = alignment_table.round({
-                                'transcript_identity':1,
-                                'structure_identity':1})
+    if destination not in outfiles:
+        return
+    outfile = outfiles[destination]
+    table,headers = df
     
-    alignment_table.sort_values(by=["structure","chain","transcript_position",
-                                    "structure_position","icode"],inplace=True)
-    return alignment_table
-
-def generate_variant_table(variant_list):
-    '''
-    Generates a variant dataframe
-    from a variant list
-    '''
-    variant_dict = {'transcript_position': [x[0] for x in variant_list],
-                    'ref_aa': [x[1] for x in variant_list],
-                    'alt_aa': [x[2] for x in variant_list],
-                    'varcode': [x[3] for x in variant_list]}
-    variant_df = pd.DataFrame.from_dict(variant_dict)
-#    variant_df.to_csv(open("tempvar","a"))
-    return variant_df
-            
-def generate_conversion_table(alignment_table,variant_table):
-    '''
-    Intersects alignment table with variant table
-    '''
-    conv_table = alignment_table.merge(variant_table,
-                                       how='inner',
-                                       on=['transcript_position'])
-    # Filter any variants that were not on a structure
-    conv_table = conv_table[pd.notnull(conv_table["structure"])]
-    # Group structures and sort residues
-    conv_table.sort_values(by=["structure","chain","transcript_position",
-                               "structure_position","icode","ref_aa"],inplace=True)
-
-
-    return conv_table
-
-def write_output(align_out,conv_out):
-    aout = outfiles['alignments']
-    if path.isfile(aout):
-        align_out.to_csv(
-            open(aout,'a'),
+    if path.isfile(outfile):
+        table.to_csv(
+            open(outfile,'a'),
             header=False,
             index=False,
             sep="\t",
-            columns=ALN_HEADER)
+            columns=headers)
     else:
-        align_out.to_csv(
-            open(aout,'w'),
+        table.to_csv(
+            open(outfile,"w"),
             index=False,
             sep="\t",
-            columns=ALN_HEADER)
-    cout = outfiles['variants']
-    if path.isfile(cout):
-        conv_out.to_csv(
-            open(cout,'a'),
-            header=False,
-            index=False,
-            sep="\t",
-            columns=CONV_HEADER)
-    else:
-        conv_out.to_csv(
-            open(cout,'w'),
-            index=False,
-            sep="\t",
-            columns=CONV_HEADER)
+            columns=headers)
 
 def write_complete(varcodes):
+    '''
+    Record completion, takes list of variant codes
+    and a string destination (PDB, SWISSMODEL, etc)
+    '''
     with open(outfiles["completed"],"a+") as outfile:
-        outfile.write("\n".join(varcodes)+"\n")                   
+        outfile.write("\n".join(x for x in varcodes)+"\n")
+
+##### MODELS #####
+
+parser = PDB.PDBParser(PERMISSIVE=1)
+
+def load_model(modelfile):
+    '''Loads the model file and generates a fasta
+       with dashes for any skipped residue #'s
+       Takes a filename and returns a dict with
+       filename: model filename
+       fasta: fastaseq (of chain, with - for skipped res #)
+       chain: chainID (only uses first chain if multiple)
+       icodes: sequence of icodes (' ' for none)
+       resnums: list of residue numbers'''
+    structure = parser.get_structure("Model",modelfile)
+    chainID,complex_state = model_information(modelfile)
+    chain = structure[0][chainID]
+    resnum = 0
+    fasta = ""
+    icodes = ""
+    resnums = list()
+    for residue in chain:
+        #Skip hetatoms
+        if not PDB.is_aa(residue): continue
+        resid = residue.get_id()
+        #Fill in gaps with -
+        while resid[1] > resnum+1:
+            fasta += '-'
+            resnum+=1
+        hetflag,resnum,icode = resid
+        aa = AA[residue.get_resname()]
+        fasta += aa
+        icodes += icode
+        resnums.append(resnum)
+    return {'filename':modelfile,
+            'fasta':fasta,
+            'chain':chainID,
+            'icodes':icodes,
+            'resnums':resnums,
+            'complex_state':complex_state}
+
+def model_information(modelfile):
+    '''Gets specific model information.
+       Regarding complex status and current chain.
+       Relevant for non-monomers'''
+    #Right now, I'm getting the current chain based on the filename
+    #However, I think in REMARK 3 the MMCIF also corresponds to chain
+    chain = re.search("[.][\w][_][\w]+\.pdb$",modelfile).group(0)[1:2]
+    #Get the complex state of the model
+    with open(modelfile) as infile:
+        complex_state = 'monomer'
+        for line in infile:
+            if not line.strip().startswith("REMARK   3  OSTAT"): continue
+            complex_state = line.strip().split()[-1]
+    return chain,complex_state             
