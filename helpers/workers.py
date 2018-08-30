@@ -81,11 +81,11 @@ def worker(variant, datasets, arguments):
         trans_seq = datasets['transcripts'][current_transcript]
         unp_seq = datasets['uniprots'][uniprot]
         #varcodes set is used to write completion table
-        varcodes = set([x[3] for x in variant_list])
+        varcodes = set([x[4] for x in variant_list])
         
         # Expand the nonmissense variants if set
         if arguments.expand:
-            expand_variants(variant_list,trans_seq)
+            variant_list = expand_variants(variant_list,trans_seq)
         
         variant_table = generate_variant_table(variant_list)
         
@@ -280,7 +280,7 @@ def generate_variant_table(variant_list):
     variant_dict = {'transcript_position': [x[0] for x in variant_list],
                     'ref_aa': [x[1] for x in variant_list],
                     'alt_aa': [x[2] for x in variant_list],
-                    'varcode': [x[3] for x in variant_list]}
+                    'varcode': [x[4] for x in variant_list]}
     variant_df = pd.DataFrame.from_dict(variant_dict)
     return variant_df
 
@@ -362,5 +362,53 @@ def expand_variants(variants,trans_seq):
     '''
     Expands non-missense variants into 
     all affected residues
+    Takes a list of variants as
+    [position, ref, alt,annotation,varcode]
+    and a transcript sequence
+    Expands inframe deletions with an - for alt at every pos lost
+    Expands early stop and frameshifts with X for alt at every pos
+    after start of mutation
+    Drops any variants that can not be expanded, writing them to failures
+    Returns new list of variants including expanded vars when possible
     '''
-    pass            
+    failures = list()
+    newvariants = list()
+    reason = "Failed to expand"
+    for variant in variants:
+        position,refaa,altaa,annotation,varcode = variant
+        # Don't expand missense        
+        if "MISSENSE" in annotation:
+            newvariants.append(variant)
+            continue
+        # Expand in-frame deletions
+        elif "-" in position and "INFRAME_DELETION" in annotation:
+            newref = refaa
+            if len(altaa)>1:
+                write.failures(variant,reason)
+                continue
+            try:                
+                pos1,pos2 = [int(x) for x in variant[0].split("-")]
+            except IndexError,ValueError:
+                write.failures(variant,reason+": parse position")
+                continue
+            # Inframe deletions are sometimes defined with one AA remaining
+            # instead of just a - in altaa
+            if altaa==refaa[0]:
+                pos1 += 1
+                newref = refaa[1:]
+            elif altaa==refaa[-1]:
+                pos2-=1
+                newref = refaa[:-1]
+            for i,x in enumerate(range(pos1,pos2+1)):   
+                newvariants.append([i,newref,"-",annotation,varcode])
+        # Single residue deletions
+        elif "INFRAME_DELETION" in annotation and "STOP" not in annotation:
+            print annotation
+            newvariants.append([int(position),refaa,"-",annotation,varcode])
+        # Everything else (frameshift, early stop) are from pos to end of transcript
+        else:
+            startpos = int(position.split("-")[0])
+            for pos in range(startpos-1,len(trans_seq)):
+                newvariants.append([pos+1,refaa,"X",annotation,varcode])
+    return newvariants                            
+                                                                                         

@@ -74,7 +74,7 @@ def process_variant(variant,expand):
     Frameshift appear as X from start of frameshift to end of transcript
     Early stop appear as X from position of stop to end of transcript
     Takes the list of columns of the current variant line and returns
-    [position, ref, alt,annotation(for expanding if necessary)]
+    [position, ref, alt,annotation(for expanding if necessary),varcode]
     '''
     if variant[-2].upper() in [""," ","-", ".","?","NA","NONE","UNASSIGNED"]:
         return ["no uniprot assigned"]
@@ -127,7 +127,7 @@ def process_variant(variant,expand):
     except ParseWarning as e:
         print e.fullmsg
         return [e.fullmsg]
-    return [position,refaa,altaa]
+    return [position,refaa,altaa,annotation]
     
 # Iterate through variant lines    
 def parse_varfile(varfile,expand):
@@ -176,7 +176,6 @@ def parse_varfile(varfile,expand):
         if line=="": continue
         line = line.strip().split("\t")
         if len(line)==0: continue
-        annotation = ["unknown reason"]
         try:
             if len(line)<7:
                 raise ParseWarning("variant_file","incomplete line: {}".format(
