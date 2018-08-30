@@ -22,7 +22,7 @@ parser.add_argument('variants', type=str,
                     '4: Mutation as refaa/altaa\n5: Protein ID\n'\
                     '6: Uniprot ID\n7: Uniprot-isoform\n'\
                     '[8]: varcode')
-parser.add_argument('--expand', '-e', action='store_true', default=True,
+parser.add_argument('--expand', '-e', action='store_true', default=False,
                     help='expand frameshift (X follows position), '\
                     'early stops (- follows position) and deletions (-)')
 parser.add_argument('--nopdb','-p', action='store_true',
@@ -34,7 +34,9 @@ parser.add_argument('--nouniprot','-u',action='store_true',
 parser.add_argument('--completed','-c',action='store_false',default=True,
                     help='suppress continuing later through completed file')
 parser.add_argument('--num_procs','-n',type=int,default=1,
-                    help='number of processes to run at once (default 1)')                                                                               
+                    help='number of processes to run at once (default 1)')
+parser.add_argument('--noalign','-a',action='store_true',
+                    help='suppress creation of full alignment files')                                                                                                   
 
 args = parser.parse_args()
 

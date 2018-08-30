@@ -261,9 +261,10 @@ def worker(variant, datasets, arguments):
                 
     # Finished alignments, now write tables
     if multiproc:
-        lock.aquire()
-    for table in alntables:
-        IO.write_table(table,"alignments")
+        lock.acquire()
+    if not arguments.noalign:
+        for table in alntables:
+            IO.write_table(table,"alignments")
     for table in vartables:
         IO.write_table(table,"variants")
     if arguments.completed:
@@ -403,7 +404,6 @@ def expand_variants(variants,trans_seq):
                 newvariants.append([i,newref,"-",annotation,varcode])
         # Single residue deletions
         elif "INFRAME_DELETION" in annotation and "STOP" not in annotation:
-            print annotation
             newvariants.append([int(position),refaa,"-",annotation,varcode])
         # Everything else (frameshift, early stop) are from pos to end of transcript
         else:
