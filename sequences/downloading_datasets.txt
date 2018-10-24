@@ -32,7 +32,26 @@ wget https://swissmodel.expasy.org/repository/download/core_species/9606_meta.ta
 
 UniProt:
 
+1. Download Fasta for all protein sequences
+
 ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
+
+2. Download additional uniprot data (for canonical isoform identification)
+
+wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/knowledgebase/docs/sec_ac.txt -nd nH
+wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.dat.gz -nd -nH
+
+3. Process mapping file
+
+sed '1,30d' sec_ac.txt | sed 's/ \+ /\t/g' | sed 's/____________/Secondary/;s/__________/Primary/' > uniprot_sec2prim_ac.txt
+
+(can now remove sec_ac.txt)
+
+3. Process main uniprot dataset
+
+./process_uniprot.py
+
+(can now remove uniprot_sprot.dat.gz)
 
 ---
 

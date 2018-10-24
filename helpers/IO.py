@@ -12,17 +12,24 @@ import re
 
 ##### INITIALIZATION FUNCTIONS #####
 
-# Define what the sequence files are
-SEQ_PATH = "./sequences/" # Where pickles are
+# Define what the dataset files are
+SEQ_PATH = "./sequences/" # Where required datasets are
 SWISS_SEQ = "swissmodel.pickle" # Model mapping
 UNP_SEQ = "unp.pickle" # Uniprot sequences
+UNP_CANONICAL = "uniprot_canonical_isoforms.tab" # Canonical uniprot ACs
+UNP_MAP = "uniprot_sec2prim_ac.txt" # Uniprot secondary to primary AC map
 TRANS_SEQ = "trans.pickle" # Transcript sequences
 SIFTS_SEQ = "sifts.pickle" # uniprot - pdb mapping
 SIFTS_PATH = "/dors/capra_lab/data_clean/sifts/2018-08-08/xml/" # Where sifts alignments are
 
-# Ensure that the required sequence pickles are available
+# Ensure that the required datasets are available
 def check_seqs(nomodel,nopdb):
-    for x in [SWISS_SEQ, UNP_SEQ, TRANS_SEQ, SIFTS_SEQ]:
+    for x in [SWISS_SEQ,
+              UNP_SEQ,
+              UNP_CANONICAL,
+              UNP_MAP,
+              TRANS_SEQ,
+              SIFTS_SEQ]:
         if (x=="SWISS_SEQ" and not nomodel) or\
            (x!="SWISS_SEQ" and not nopdb):\
             assert path.isfile(SEQ_PATH+x),\
@@ -51,18 +58,63 @@ def define_output(varfilename):
 ##### VARIANT PARSING #####
 
 # Read in the variant file
-def load_variants(varfilename,expand):
-    # Try to open the file
-    try:
-        infile = open(varfilename)
-    except IOError as e:
-        sys.exit("Unable to open {}: {}".format(varfilename,e))
-    # Try to parse it
-    try:
-        variants = parse_varfile(infile,expand)
-    except ParseException as e:
-        print "Critical failure:"
-        sys.exit(e.fullmsg)
+def load_variants(args):
+    varfilename = args.variants
+    # If a raw VEP was given, select one consequence per coding variant
+    # and then parse
+    if args.vep:
+        vepoutfile = path.splitext(path.basename(varfilename))[0]+".vep_selected"
+        if path.isfile(vepoutfile):
+            print "Found potential selected file {} already created, overwrite it?".format(vepoutfile)
+        try:
+            a = raw_input("(y/n/q) ").lower()[0]
+        except SyntaxError:
+            a = "NA"            
+        while a not in ["y","n","q"]:
+            try:
+                a = raw_input("(y/n/q) ").lower()[0]
+            except SyntaxError:
+                a = "NA"
+        if a=="q":
+            sys.exit("Canceled")
+        if a=="y":                        
+            fullvep = parse_vepfile(varfilename)
+            unique_vep = process_vep(fullvep)
+            try:
+                if len(unique_vep.index) == 0:
+                    raise ParseException("VEP file","No variants selected from VEP file")
+            except ParseException as e:
+                sys.exit(e.fullmsg)  
+            # Write selected vars to file and parse them as normal
+            unique_vep.to_csv(open(vepoutfile,"w"),
+                              sep="\t",
+                              columns=["Consequence",
+                                       "Transcript",
+                                       "Protein_position",
+                                       "Amino_acids",
+                                       "Protein",
+                                       "Uniprot",
+                                       "Isoform",
+                                       "Varcode"],
+                              header=False,
+                              index=False)                                   
+            print "{} Selected vars written to standard varfile {}".format(
+                        len(unique_vep.index),
+                        vepoutfile)
+        variants = parse_varfile(open(vepoutfile),args)        
+
+    else: # Otherwise, parse it directly
+        #Try to open the file
+        try:
+            infile = open(varfilename)
+        except IOError as e:
+            sys.exit("Unable to open {}: {}".format(varfilename,e))
+        # Try to parse it
+        try:
+            variants = parse_varfile(infile,args)
+        except ParseException as e:
+            print "Critical failure:"
+            sys.exit(e.fullmsg)
     return variants
 
 # Process a single variant line
@@ -130,7 +182,7 @@ def process_variant(variant,expand):
     return [position,refaa,altaa,annotation]
     
 # Iterate through variant lines    
-def parse_varfile(varfile,expand):
+def parse_varfile(varfile,args):
     '''
     Parses variant file. Checks for format adherence.
     Returns a dictionary of variants with entries:
@@ -154,6 +206,7 @@ def parse_varfile(varfile,expand):
     KEY = variant identifier (transcript or protein)
     ENTRY = [[uniprot, isoform],[list of variants]]
     '''
+    expand = args.expand
     skipped = list()
     variants = dict()
     count = 0
@@ -235,8 +288,125 @@ def filter_complete(variants):
         if len(filtered)>0:
             keptvars[trans] = [variants[trans][0],filtered]                
     return keptvars
+
+# Parse raw VEP output file
+
+def parse_vepfile(vepfile):
+    '''
+    Reads in a raw VEP file
+    Takes a filename and first checks if necessary columns are there
+    Then, reads it in as a pandas DataFrame, prepares the columns,
+    and filters for coding variants
+    Returns prepared dataframe
+    '''
+    # Check to make sure the necessary columns are there
+    with open(vepfile) as infile:
+        header = infile.readline().strip().split()
+    required_cols = ["#Uploaded_variation",
+                     "Location",
+                     "Allele",
+                     "Consequence",
+                     "SYMBOL",
+                     "Gene",
+                     "Feature",
+                     "BIOTYPE",
+                     "Protein_position",
+                     "Amino_acids",
+                     "Codons",
+                     "ENSP",
+                     "SWISSPROT",
+                     "TREMBL"]
+    for x in required_cols:
+        if x not in header:
+            raise ParseException(
+                "Raw VEP file",
+                "required column {} missing from header".format(x))
+    df = pd.read_csv(open(vepfile),sep="\t")[required_cols]
+    df.rename(columns={"#Uploaded_variation":"Varcode",
+                       "Feature":"Transcript",
+                       "ENSP":"Protein"},inplace=True)
+    df = df[df["Amino_acids"].str.len()>1]
+    print "{} unique coding variants loaded".format(df["Varcode"].nunique())
+    return df
+
+def process_vep(vep):
+    '''
+    Takes the full VEP dataframe and selects a single
+    consequence per variant, order of preference:
+    1) Select canonical ENST when possible
+    2) Select canonical RefSeq when possible
+    3) Select ENST with unassigned canonical
+    4) Select Refseq with unassigned canonical
+    5) Select ENST specifically not canonical
+    6) Select Refseq specifically not canonical
+    Anything without a Uniprot assignment is filtered
+    In the event of a tie, take highest transcript
+    ID if AA and pos are the same, otherwise take highest pos
+    returns a list of unique variants in the form of
+    the typical variant input file
+    '''        
+    # canonical identifies the canonical transcript used by uniprot
+    canonical = load_canonical()
+    # sec2prime allows filtering out any secondary uniprot ACs
+    sec2prime = load_sec2prime()
     
-##### PICKLE LOADING #####
+    # Attach the uniprot names
+    vep = vep.merge(canonical,how="left",on=["Transcript","Protein"])
+    
+    # Filter out anything that doesn't have a uniprot name
+    vep = vep[vep.Uniprot.notnull()]
+    nrows = len(vep.index)
+    try:
+        if len(vep.index) == 0:
+            raise ParseException("VEP file","Failed to extract variants from VEP file")
+    except ParseException as e:
+        sys.exit(e.fullmsg)  
+
+    print "{} unique coding variants were mapped to a uniprot".format(
+                                                        vep.Varcode.nunique())
+
+    # Filter any secondary uniprot AC's
+    secondary = [x[0] for x in load_sec2prime()]
+    vep = vep[~vep.Uniprot.isin(secondary)]
+    
+    # Now select 1 consequence per variant
+    # Note: There may be mulitple consequences if they map to
+    # different uniprots (different proteins, same gene)
+
+    def addvars(vep,vep_final,group): #append to final set and filter from initial
+        vep_final = pd.concat([vep_final,
+                group.apply(lambda x: x.sort_values(["Protein_position","Transcript"],
+                            ascending=False).head(1))])
+        return vep[~vep.Varcode.isin(vep_final.Varcode)],vep_final                                                    
+
+    vep_final = None
+    print "selecting unique variants"
+    # Loops through steps 1-6:
+    # Canonical = YES: ENST then NM
+    # Canonical = Unassigned: ENST then NM
+    # Canonical = NO: ENST then NM
+    # Returns final set if initial set is empty
+    for outer in ["YES","Unassigned","NO"]:
+        for inner in ["ENST","NM"]:
+            print "{}: {}".format(outer,inner)
+            group = vep[(vep.Canonical==outer)\
+                    & (vep.Transcript.str.startswith(inner))]\
+                    .groupby(["Varcode","Uniprot"])
+            if vep_final is None:
+                vep_final = group.apply(lambda x: x.sort_values(["Protein_position","Transcript"],
+                                                        ascending=False).head(1))
+                vep = vep[~vep.Varcode.isin(vep_final.Varcode)]
+            else:
+                vep,vep_final = addvars(vep,vep_final,group)   
+            if len(vep.index) == 0:
+                return vep_final                           
+    print "The following {} unique coding variants were unable to be assigned:".format(
+        vep.Varcode.nunique())
+    for x in set(vep.Varcode):
+        print x        
+    return vep_final    
+      
+##### DATASET LOADING #####
 
 def open_seqfile(filename):
     filename = SEQ_PATH+filename
@@ -260,6 +430,7 @@ def load_uniprot():
     print "loaded {} uniprots".format(len(unp))
     return unp
 
+# Load sifts uniprot-PDB alignments
 def load_sifts():
     infile = open_seqfile(SIFTS_SEQ)
     sifts = pickle.load(infile)
@@ -276,6 +447,18 @@ def load_models(source):
         sys.exit("Critical: unrecognized model-type {}".format(source))
     return models
 
+# Load table of canonical uniprot isoforms
+def load_canonical():
+    df = pd.read_csv(open(SEQ_PATH+UNP_CANONICAL),sep="\t")
+    df.drop_duplicates(inplace=True)
+    return df
+
+# Load secondary to primary AC mapping
+def load_sec2prime():
+    with open(SEQ_PATH+UNP_MAP) as infile:
+        sec2prime = [x.strip().split() for x in infile]    
+    return sec2prime
+    
 ##### SIFTS LOADING #####
 
 def parse_sifts(pdb):

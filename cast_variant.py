@@ -21,7 +21,8 @@ parser.add_argument('variants', type=str,
                     '2: Transcript ID\n3: Transcript position\n'\
                     '4: Mutation as refaa/altaa\n5: Protein ID\n'\
                     '6: Uniprot ID\n7: Uniprot-isoform\n'\
-                    '[8]: varcode')
+                    '[8]: varcode\nCan also be raw VEP output; in'\
+                    'this case, must set -v to load it')
 parser.add_argument('--expand', '-e', action='store_true', default=False,
                     help='expand frameshift (X follows position), '\
                     'early stops (- follows position) and deletions (-)')
@@ -36,7 +37,10 @@ parser.add_argument('--completed','-c',action='store_false',default=True,
 parser.add_argument('--num_procs','-n',type=int,default=1,
                     help='number of processes to run at once (default 1)')
 parser.add_argument('--noalign','-a',action='store_true',
-                    help='suppress creation of full alignment files')                                                                                                   
+                    help='suppress creation of full alignment files')
+parser.add_argument('--vep','-v',action='store_true',
+                    help='input varfile is raw VEP output, select one '\
+                         'consequence per coding variant and then cast')
 
 args = parser.parse_args()
 
@@ -48,7 +52,8 @@ check_seqs(args.nomodel,args.nopdb)
 # Define the names of the output files based on input filename
 define_output(args.variants)
 # Read in the variant dict
-variants = load_variants(args.variants,args.expand)
+variants = load_variants(args)
+        
 # Filter out completed variants if set
 if args.completed:
     variants = filter_complete(variants)
