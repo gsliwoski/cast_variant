@@ -9,6 +9,7 @@ from AA import *
 import pandas as pd
 from Bio import PDB
 import re
+from numpy import where as npwhere
 
 ##### INITIALIZATION FUNCTIONS #####
 
@@ -21,6 +22,7 @@ UNP_MAP = "uniprot_sec2prim_ac.txt" # Uniprot secondary to primary AC map
 TRANS_SEQ = "trans.pickle" # Transcript sequences
 SIFTS_SEQ = "sifts.pickle" # uniprot - pdb mapping
 SIFTS_PATH = "/dors/capra_lab/data_clean/sifts/2018-08-08/xml/" # Where sifts alignments are
+DSSP = '/dors/capra_slab/bin/dssp' # DSSP application (required for some descriptors)
 
 # Ensure that the required datasets are available
 def check_seqs(nomodel,nopdb):
@@ -42,6 +44,12 @@ def check_seqs(nomodel,nopdb):
                                    "sifts dataset required for PDB".format(
                                                                     SIFTS_PATH)
                                                                                
+def check_applications(name):
+    name_map = {'DSSP':DSSP}
+    assert path.isfile(name_map[name]),\
+        "{} not found, remove {} dependent descriptors".format(
+            name_map[name],
+            name)
 
 # These are the names of the all files that will be written to
 outfiles = dict()
@@ -329,6 +337,7 @@ def parse_vepfile(vepfile):
     print "{} unique coding variants loaded".format(df["Varcode"].nunique())
     return df
 
+    
 def process_vep(vep):
     '''
     Takes the full VEP dataframe and selects a single
@@ -339,11 +348,50 @@ def process_vep(vep):
     4) Select Refseq with unassigned canonical
     5) Select ENST specifically not canonical
     6) Select Refseq specifically not canonical
+    7) Select XM entries left over
+    8) Select entries with uniprot assignments only from VEP
     Anything without a Uniprot assignment is filtered
     In the event of a tie, take highest transcript
     ID if AA and pos are the same, otherwise take highest pos
     returns a list of unique variants in the form of
     the typical variant input file
+
+    Note: In rare cases, the same variant will hit multiple
+    primary uniprot entries. In these cases, uniprot has identified
+    sufficiently different isoforms to call them different proteins
+    Therefore, repeats across different primary uniprot entries may occur.
+    
+    A minor (major?) drawback to the current approach:
+    If there is a variant which affects 2 different uniprot entries and in one
+    entry it hits the canonical transcript, while in the other it hits a 
+    non-canonical isoform, since the variant is filtered out before getting
+    to the non-canonical isoforms, both wont be captured.
+    One example is 1:g.156842168C>T which hits INSRR (one transcript) and NTRK1
+    isoform 3. Only INSRR is kept since it has 1 transcript and isoform 3 is not
+    canonical.
+
+    Another drawback that might need to be addressed:
+    As it stands, if it has multiple potentials in the same step,
+    it selects one based on max protein position and if still multiple
+    max transcript ID. The problem with this is that you can have 2 variants
+    assigned different transcripts even though it would probably be easier and better
+    if they both had the same one. For example, vars A and B don't hit canonical.
+    Var A is position 10, Var B is position 100. There is isoform name ENST1 with 
+    100 residues and ENST2 with 98 residues. The missing residues are at position
+    11-12
+    Var A gets ENST2 since it's 10 in both but ENST2>ENST1
+    Var B gets ENST1 since it's at 100 in ENST1 and 98 in ENST2
+    It's probably preferable to put them both in ENST1.
+    However, the current datasets (and uniprot_sprot_human.tab) don't have transcript
+    length. So, the best solution (to assign a transcript to a uniprot at a time before
+    selecting with var, and resolving overlaps by using longest transcript can't be done
+    without pulling in another dataset. I'm not sure how often this happens and if it
+    warrants the extra time required for this better solution.
+    One potential solution that would also solve another drawback is to read in the sequence
+    sets to get the transcript lengths. This would allow cases (no idea how common or rare)
+    where the variant hits a transcript in the fasta set but is assigned a different transcript
+    that is not in the sequences set but is, for example, canonical according to uniprot. In this
+    case, a transcript present in the sequence set could be preferred.
     '''        
     # canonical identifies the canonical transcript used by uniprot
     canonical = load_canonical()
@@ -351,9 +399,12 @@ def process_vep(vep):
     sec2prime = load_sec2prime()
     
     # Attach the uniprot names
-    vep = vep.merge(canonical,how="left",on=["Transcript","Protein"])
-    
+    vep = vep.merge(canonical,how="left",on=["Transcript","Protein"]) 
+
     # Filter out anything that doesn't have a uniprot name
+    # Keep those without a uniprot name for use in case they have one
+    # assigned by VEP
+    vep_nullunp = vep[vep.Uniprot.isnull()]
     vep = vep[vep.Uniprot.notnull()]
     nrows = len(vep.index)
     try:
@@ -362,8 +413,8 @@ def process_vep(vep):
     except ParseException as e:
         sys.exit(e.fullmsg)  
 
-    print "{} unique coding variants were mapped to a uniprot".format(
-                                                        vep.Varcode.nunique())
+#    print "{} unique coding variants were mapped to a uniprot".format(
+#                                                        vep.Varcode.nunique())
 
     # Filter any secondary uniprot AC's
     secondary = [x[0] for x in load_sec2prime()]
@@ -375,35 +426,96 @@ def process_vep(vep):
 
     def addvars(vep,vep_final,group): #append to final set and filter from initial
         vep_final = pd.concat([vep_final,
-                group.apply(lambda x: x.sort_values(["Protein_position","Transcript"],
+                group.apply(lambda x: x.sort_values(["quickpos","Transcript"],
                             ascending=False).head(1))])
         return vep[~vep.Varcode.isin(vep_final.Varcode)],vep_final                                                    
 
     vep_final = None
+    
+    #Need to add a quickposition column that is the int of the first
+    # position for finding max position instance for repeats
+    vep["quickpos"] = vep.Protein_position.str.extract('(\d+)',expand=False).astype(int)
+    vep_nullunp["quickpos"] = vep_nullunp.Protein_position.str.extract('(\d+)',expand=False).astype(int)
+
     print "selecting unique variants"
     # Loops through steps 1-6:
-    # Canonical = YES: ENST then NM
-    # Canonical = Unassigned: ENST then NM
-    # Canonical = NO: ENST then NM
-    # Returns final set if initial set is empty
+    # Canonical = YES: ENST then NM then XM
+    # Canonical = Unassigned: ENST then NM then XM
+    # Canonical = NO: ENST then NM then XM
+    
+    # Typically, when a transcript is unassigned it means it is the only
+    # one and therefore no isoform is designated. However, there is an edge
+    # case where it is unassigned even though there are assignments
+    # So, need to deal with these after and remove them for now
+    vep_unassigned = vep[(vep.Canonical=="Unassigned")\
+                          & (pd.to_numeric(vep.nIsoforms)>0)]
+    vep = vep[~((vep.Canonical=="Unassigned")\
+                          & (pd.to_numeric(vep.nIsoforms)>0))]   
+    print "vep"
+    print vep[vep.Varcode=="1:g.155187269G>A"]
+    print "unassigned"
+    print vep_unassigned[vep_unassigned.Varcode=="1:g.155187269G>A"]    
+    print "nullunp"
+    print vep_nullunp[vep_nullunp.Varcode=="1:g.155187269G>A"]    
+    
     for outer in ["YES","Unassigned","NO"]:
-        for inner in ["ENST","NM"]:
+        for inner in ["ENST","NM","XM"]:
+            if len(vep.index)==0: break
             print "{}: {}".format(outer,inner)
             group = vep[(vep.Canonical==outer)\
                     & (vep.Transcript.str.startswith(inner))]\
                     .groupby(["Varcode","Uniprot"])
             if vep_final is None:
-                vep_final = group.apply(lambda x: x.sort_values(["Protein_position","Transcript"],
+                vep_final = group.apply(lambda x: x.sort_values(["quickpos","Transcript"],
                                                         ascending=False).head(1))
                 vep = vep[~vep.Varcode.isin(vep_final.Varcode)]
             else:
                 vep,vep_final = addvars(vep,vep_final,group)   
-            if len(vep.index) == 0:
-                return vep_final                           
-    print "The following {} unique coding variants were unable to be assigned:".format(
-        vep.Varcode.nunique())
-    for x in set(vep.Varcode):
-        print x        
+    # Deal with any of potential cases where an unassigned transcript is only hit
+    # in a uniprot with multiple isoforms
+    vep_unassigned = vep_unassigned[~vep_unassigned.Varcode.isin(vep_final.Varcode)]
+    for inner in ["ENST","NM","XM"]:
+        if len(vep_unassigned.index)==0: break
+        group = vep_unassigned[vep_unassigned.Transcript.str.startswith(inner)]\
+                                .groupby(["Varcode","Uniprot"])
+        current_vars = group.apply(lambda x: x.sort_values(["quickpos","Transcript"],
+                                             ascending=False).head(1))
+        vep_final = pd.concat([vep_final,current_vars])
+        vep_unassigned = vep_unassigned[~vep_unassigned.Varcode.isin(vep_final.Varcode)]        
+    
+    # Step 8: select any remaining variants that could not
+    # be assigned a uniprot entry based on the read in uniprot data.
+    # Only consider instances where VEP provided a uniprot entry.
+    # In some cases, the VEP uniprot may not match the current uniprot
+    # which is why only those in the sequence datasets provided to this
+    # program were considered first and anything left over the uniprot is 
+    # taken from VEP
+    vep_nullunp = vep_nullunp[~vep_nullunp.Varcode.isin(vep_final.Varcode)]
+    for outer in ["SWISSPROT","TREMBL"]:
+        for inner in ["ENST","NM","XM"]:
+            if len(vep_nullunp.index)==0: break
+            print "{}: {}".format(outer,inner)
+            group = vep_nullunp[(vep_nullunp[outer]!="-")\
+                                & (vep_nullunp.Transcript.str.startswith(inner))]\
+                                .groupby(["Varcode",outer])
+            current_vars = group.apply(lambda x: x.sort_values(["quickpos","Transcript"],
+                                                        ascending=False).head(1))
+            vep_final = pd.concat([vep_final,current_vars])
+            vep_final["Uniprot"] = npwhere(vep_final.Uniprot.isnull(),
+                                           vep_final[outer],
+                                           vep_final.Uniprot)
+            vep_final["Isoform"] = npwhere(vep_final.Isoform.isnull(),
+                                           vep_final[outer],
+                                           vep_final.Isoform)                                          
+            vep_nullunp = vep_nullunp[~vep_nullunp.Varcode.isin(vep_final.Varcode)]
+
+    print "{} unique variants with uniprot assignment selected".format(
+                                            vep_final.Varcode.nunique())
+    vep = pd.concat([vep,vep_nullunp,vep_unassigned])
+    if len(vep.index)>0:
+        print "The following {} unique coding variants were unable to be assigned:".format(
+            vep.Varcode.nunique())
+        print ",".join(set(vep.Varcode))
     return vep_final    
       
 ##### DATASET LOADING #####

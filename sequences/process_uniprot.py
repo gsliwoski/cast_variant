@@ -5,6 +5,8 @@ unp_file = "uniprot_sprot.dat.gz"
 unp_outfile = "uniprot_sprot_human.dat"
 canonical_outfile = "uniprot_canonical_isoforms.tab"
 
+# Known errors
+# P61812 - doesn't conform to standard displayed= section
 human = list()
 # Step 1: filter for human proteins only
 print "Isolating human"

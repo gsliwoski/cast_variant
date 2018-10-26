@@ -349,7 +349,7 @@ def gather_sifts(uniprot,isoform,sifts):
                        (resdf["uniprot"] == ""))]
         if len(resdf.index)==0:
             continue
-        resdf.drop("uniprot",inplace=True,axis=1)
+        resdf = resdf.drop("uniprot",inplace=False,axis=1)
         if all_residues is None:
            all_residues = resdf
         else:

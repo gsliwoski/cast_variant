@@ -41,6 +41,17 @@ parser.add_argument('--noalign','-a',action='store_true',
 parser.add_argument('--vep','-v',action='store_true',
                     help='input varfile is raw VEP output, select one '\
                          'consequence per coding variant and then cast')
+parser.add_argument('--descriptors','-d',type=str,default="",
+                    help='Positional descriptors, comma separated:\n'\
+                         'all = all possible descriptors\n'\
+                         'ss = secondary structure (DSSP)\n'\
+                         'sasa = solvent accessible surface area (DSSP)\n'\
+                         'rasa = relative accessible surface area (DSSP/AAmax)\n'\
+                         'ds = distance to surface (0 if SASA>0.1)\n'\
+                         'unp = uniprot annotations, see README for list\n'\
+                         'ligand = distance from ligand (-1 if no ligand)\n'\
+                         'na = distance from dna/rna (-1 if neither)\n'\
+                         'peptide = distance from binding peptide/protein')                                           
 
 args = parser.parse_args()
 
@@ -49,6 +60,13 @@ assert not (args.nomodel and args.nopdb), \
 
 # Check if necessary sequence files are there
 check_seqs(args.nomodel,args.nopdb)
+# Process the descriptors and check if DSSP is there if necessary
+if len(args.descriptors)>0:
+    args.descriptors = args.descriptors.lower().split(",")
+if 'all' in args.descriptors or 'ss' in args.descriptors or \
+   'sasa' in args.descriptors or 'rasa' in args.descriptors or \
+   'ds' in args.descriptors:
+    check_applications('DSSP')
 # Define the names of the output files based on input filename
 define_output(args.variants)
 # Read in the variant dict
