@@ -22,7 +22,11 @@ UNP_MAP = "uniprot_sec2prim_ac.txt" # Uniprot secondary to primary AC map
 TRANS_SEQ = "trans.pickle" # Transcript sequences
 SIFTS_SEQ = "sifts.pickle" # uniprot - pdb mapping
 SIFTS_PATH = "/dors/capra_lab/data_clean/sifts/2018-08-08/xml/" # Where sifts alignments are
-DSSP = '/dors/capra_slab/bin/dssp' # DSSP application (required for some descriptors)
+DSSP = '/dors/capra_lab/bin/dssp' # DSSP application (required for some descriptors)
+PDB_PATH = "/dors/capra_lab/data_clean/pdb/2018-04-11/structures/" #All PDB structures
+# PDB files must be in pdbXXXX.ent.gz format and in one directory
+SWISS_PATH = "/dors/capra_lab/data_clean/swissmodel/2018-07-23/SWISS-MODEL_Repository/"
+# SWISSModel hierarchy should be in format as downloaded and required for pickling sequences
 
 # Ensure that the required datasets are available
 def check_seqs(nomodel,nopdb):
@@ -45,11 +49,17 @@ def check_seqs(nomodel,nopdb):
                                                                     SIFTS_PATH)
                                                                                
 def check_applications(name):
-    name_map = {'DSSP':DSSP}
-    assert path.isfile(name_map[name]),\
+    '''
+    Check paths for required descriptor files/applications
+    name = 'DSSP' or 'PDB' or 'SWISS'
+    '''
+    name_map = {'DSSP':DSSP,'PDB':PDB_PATH,'SWISS':SWISS_PATH}
+    assert path.isfile(name_map[name]) or \
+           path.isdir(name_map[name]),\
         "{} not found, remove {} dependent descriptors".format(
             name_map[name],
             name)
+                
 
 # These are the names of the all files that will be written to
 outfiles = dict()

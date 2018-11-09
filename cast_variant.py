@@ -46,12 +46,15 @@ parser.add_argument('--descriptors','-d',type=str,default="",
                          'all = all possible descriptors\n'\
                          'ss = secondary structure (DSSP)\n'\
                          'sasa = solvent accessible surface area (DSSP)\n'\
-                         'rasa = relative accessible surface area (DSSP/AAmax)\n'\
+                         'isasa = isolated sasa (ligands/other chains excluded)\n'\
                          'ds = distance to surface (0 if SASA>0.1)\n'\
                          'unp = uniprot annotations, see README for list\n'\
                          'ligand = distance from ligand (-1 if no ligand)\n'\
                          'na = distance from dna/rna (-1 if neither)\n'\
-                         'peptide = distance from binding peptide/protein')                                           
+                         'peptide = distance from binding peptide/protein'
+                         "artifacts = don't filter ligand/complex artifacts."\
+                         " By default, ligands or biounits previously identified as"\
+                         " artifacts in other databases are filtered.")                                           
 
 args = parser.parse_args()
 
@@ -62,11 +65,16 @@ assert not (args.nomodel and args.nopdb), \
 check_seqs(args.nomodel,args.nopdb)
 # Process the descriptors and check if DSSP is there if necessary
 if len(args.descriptors)>0:
+    if not args.nopdb:
+        check_applications("PDB")
+    if not args.nomodel:
+        check_applications("SWISS")
     args.descriptors = args.descriptors.lower().split(",")
-if 'all' in args.descriptors or 'ss' in args.descriptors or \
-   'sasa' in args.descriptors or 'rasa' in args.descriptors or \
-   'ds' in args.descriptors:
-    check_applications('DSSP')
+    if 'all' in args.descriptors or 'ss' in args.descriptors or \
+    'sasa' in args.descriptors or 'rasa' in args.descriptors or \
+    'ds' in args.descriptors:
+        check_applications('DSSP')
+    
 # Define the names of the output files based on input filename
 define_output(args.variants)
 # Read in the variant dict
