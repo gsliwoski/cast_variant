@@ -39,3 +39,13 @@ class WorkerException(Exception):
         self.source = source
         self.msg = msg
         self.fullmsg = "worker: {} failed: {}".format(source, msg)
+
+class DescriptorException(Exception):
+    '''
+    Failure during descriptor attachment
+    '''
+    def __init__(self, source, msg):
+        self.args = (source,msg)
+        self.source = source
+        self.msg = msg
+        self.fullmsg = "descriptor gen failure: {} {}".format(source,msg)        

@@ -43,14 +43,12 @@ parser.add_argument('--vep','-v',action='store_true',
                          'consequence per coding variant and then cast')
 parser.add_argument('--descriptors','-d',type=str,default="",
                     help='Positional descriptors, comma separated:\n'\
-                         'all = all possible descriptors\n'\
-                         'ss = secondary structure (DSSP)\n'\
-                         'sasa = solvent accessible surface area (DSSP)\n'\
-                         'isasa = isolated sasa (ligands/other chains excluded)\n'\
+                         'all = all possible descriptors without artifacts\n'\
+                         'dssp = descriptors from DSSP (SS, SASA, isolated SASA)\n'\
                          'ds = distance to surface (0 if SASA>0.1)\n'\
                          'unp = uniprot annotations, see README for list\n'\
                          'ligand = distance from ligand (-1 if no ligand)\n'\
-                         'na = distance from dna/rna (-1 if neither)\n'\
+                         'dna = distance from dna/rna (-1 if neither)\n'\
                          'peptide = distance from binding peptide/protein'
                          "artifacts = don't filter ligand/complex artifacts."\
                          " By default, ligands or biounits previously identified as"\
@@ -70,11 +68,14 @@ if len(args.descriptors)>0:
     if not args.nomodel:
         check_applications("SWISS")
     args.descriptors = args.descriptors.lower().split(",")
-    if 'all' in args.descriptors or 'ss' in args.descriptors or \
-    'sasa' in args.descriptors or 'rasa' in args.descriptors or \
-    'ds' in args.descriptors:
+    if 'all' in args.descriptors:
+        args.descriptors = ['dssp','ds','unp','ligand','dna',
+                            'peptide'] #TODO: update as more descriptors implemented
+    if 'dssp' in args.descriptors:
         check_applications('DSSP')
-    
+                
+else:
+    args.descriptors = list()    
 # Define the names of the output files based on input filename
 define_output(args.variants)
 # Read in the variant dict
@@ -86,7 +87,7 @@ if args.completed:
 
 try:
     if len(variants.keys())==0:
-        raise ParseException("variants_file","No usable variants, check for a skipped file.")
+        raise ParseException("variants_file","No usable variants, check for a skipped/completed file.")
 except ParseException as e:
     sys.exit(e.fullmsg)        
 #print variants
@@ -128,7 +129,10 @@ if not (args.nopdb):
     datasets['sifts'] = load_sifts()
 if not (args.nomodel):
     datasets['models'] = load_models("swissmodel")
-
+# Clear the previous files if continue from completed turned off
+if not args.completed:
+    remove_previous_files()
+    
 succ = cast_variants(variants,datasets,args)
 print "Complete: {} transcripts successfully aligned".format(succ)
 

@@ -4,9 +4,24 @@ from Bio import PDB
 from collections import OrderedDict
 import os
 import uuid
+import pandas as pd
+import urllib2
 
 INSULIN = "P01308"
 BETA2MG = "P61769"
+PDB_URL_FORMAT = "https://files.rcsb.org/view/{}.pdb" #uppercase 4char
+
+# Headers are the defined columns for each descriptor
+HEADERS = {'dssp': ['SS','SASA_complex','SASA_self'],
+           'ligand': ['closest_ligand_distance','ligands_within_6A'],
+           'nucleotide': ['closest_nucleotide_distance'],
+           'peptide': ['closest_peptide_distance','chains_within_6A']}
+# Holders are the placeholder values for each of the descriptor columns
+# Typically ? for character descriptors and -999 for numeric
+HOLDERS = {'SS':'?','SASA_complex':-999,'SASA_self':-999,
+           'closest_ligand_distance':-999,'ligands_within_6A':'?',
+           'closest_nucleotide_distance':-999,
+           'closest_peptide_distance':-999,'chains_within_6A':'?'}
 
 class DictQue(OrderedDict):
     '''
@@ -36,6 +51,9 @@ class PDBList(object):
     reaches 10 items, the insulin and beta2 collections are flushed under
     the assumption that they are no longer needed.
     I'm sure there are other highly represented proteins that may want to add.
+
+    This class is unnecessary right now and isn't used
+    It's unlikely it will ever become necessary
     '''
     def __init__(self, artifacts=True):
         self.collection = DictQue(maxlen=200)
@@ -58,14 +76,7 @@ class PDBList(object):
         filename = pdbid
         if target is None:
             target = self.collection
-        pdbid = os.path.splitext(os.path.basename(filename))[0]
-        try:
-            struct = self.parser.get_structure(pdbid,filename)
-            struct_object = Structure(struct,self.artifacts,filename)
-            struct_object.add_dssp()
-        except ParseWarning as e:
-            print e.fullmsg
-            struct_object = Structure(None,self.artifacts)
+        struct_object = Structure(filename,self.artifacts)
             
         target[filename] = struct_object
         return None
@@ -104,20 +115,20 @@ class PDBList(object):
             self.add_pdb(pdbid,self.beta2mg)                
         return None
     
-    def get_descriptors(self, pdbid, uniprot):
+    def get_descriptors(self, pdbid, uniprot, d):
         if uniprot==INSULIN:
             if pdbid not in self.insulin:
                 self.add_insulin(pdbid)
-            return self.insulin[pdbid]
+            return self.insulin[pdbid].descriptors(d)
 
         elif uniprot==BETA2MG:
             if pdbid not in self.beta2mg:
                 self.add_beta2mg(pdbid)
-            return self.beta2mg[pdbid]
+            return self.beta2mg[pdbid].descriptors(d)
         else:          
             if pdbid not in self.collection:
                 self.add_pdb(pdbid,self.collection)
-            return self.collection[pdbid]
+            return self.collection[pdbid].descriptors(d)
 
     def __str__(self):
         return "collection: {}, insulin: {}, beta2mg: {}, flushes {}".format(
@@ -125,19 +136,27 @@ class PDBList(object):
 
 class Structure(object):
     '''
-    Container for structure-based descriptors.
-    Takes a parsed PDB object or nothing.
-    If provided nothing, generates a holder structure
-    that returns -1 for all numeric descriptors
-    and ? for all string descriptors
+    Generate a structure object which uses biopython to load
+    the pdb file.
+    Descriptors can be attached to it as needed.
+    Descriptors are stored in the form of a dataframe with each residue
+    having its own row and each descriptor as a column
+    Takes a PDB file name during initialization and 
+    artifacts = T/F (filter out binding partner artifacts (not implemented)
+    Can be initialized without a PDB filename in which case all descriptors
+    will be set to filler values.
+    Filler descriptors are -999 for all numeric values and ? for all character
     '''
     
-    def __init__(self, struct=None,artifacts=True,filename=None):
+    def __init__(self,url=None,filename=None,model=None,artifacts=True):
         '''
-        Takes PDB Structure object and
-        artifact flag (filter artifact complexes)
+        Takes a PDB, if url then uses urlstream as parser input
+        if filename, then uses filename as parser input
+        if model, then uses parsed model object directly without parsing
+        Takes PDB filename and
+        artifacts = T/F whether to filter out artifact complexes
         '''
-        self.struct = struct
+        self.parser = PDB.PDBParser(PERMISSIVE=1,QUIET=True)
         self.filename = filename
         self.dssp = None
         self.ligand = None
@@ -145,7 +164,37 @@ class Structure(object):
         self.peptide = None       
         self.artifacts = artifacts
         self.dssp_path = DSSP
-        print struct.get_id()
+        self.id = "Holder"
+        self.res_header = ['chain','structure_position','icode']
+        self.header = list()
+        self.descriptors = None
+        self.struct = None
+        if url:
+            try:
+                self.filename = 'url'
+                self.id = url
+                pdburl = urllib2.urlopen(PDB_URL_FORMAT.format(url.upper()))
+                self.struct = self.parser.get_structure(self.id,pdburl)
+                pdburl.close()
+                self.header += self.res_header
+            except IOError as e:
+                print e
+                self.id = "Holder"
+        elif filename:
+            try:
+                self.filename = filename
+                self.id = os.path.splitext(os.path.basename(filename))[0]            
+                self.struct = self.parser.get_structure(self.id,filename)
+                self.header += self.res_header
+            except IOError as e:
+                print e
+                self.id = "Holder"
+        elif model:
+            self.filename = 'model'
+            self.struct = model
+            self.id = model.get_id()
+            self.header += self.res_header
+
     def add_dssp(self):
         '''
         Adds DSSP features.
@@ -156,48 +205,128 @@ class Structure(object):
         DSSP takes files directly so need to create a temporary PDB file for
         each chain
         '''
-        if self.struct is None:
-            print "Can't add DSSP to holder Structure"
-            return None
-        try:
-            oligomer = PDB.DSSP(self.struct[0],self.filename,self.dssp_path)
-        except OSError as e:
-            raise ParseWarning("DSSP Calculation","Failed DSSP for {}({})".format(self.filename,e))
-#        chainid = "A" #Used for isolating chains
-        class chain_select(PDB.Select): #Needed for extracting each chain
-            def accept_chain(self,c):
-                if c.get_id() == chainid:
-                    return True
+        if self.id == "Holder":
+            self.header += HEADERS['dssp']
+            c = HOLDERS.keys()
+            h = ['?','?','?']+[HOLDERS[x] for x in c]
+            c = self.res_header+c
+            self.dssp = pd.DataFrame([h],columns=c)[self.res_header+HEADERS['dssp']]
+        else:
+            dssp = list()
+            try:
+                #Calculate DSSP for Oligomer
+                #DSSP is pain in that it only takes files. Therefore, if this was created
+                # using a model or url, create a temporary file
+                if self.filename == "url" or self.filename == "model":
+                    ofile = "_".join([uuid.uuid4().hex,self.id])
+                    io = PDB.PDBIO()
+                    io.set_structure(self.struct)
+                    io.save(ofile)
+                    try:                        
+                        oligomer = dict(PDB.DSSP(self.struct[0],ofile,self.dssp_path))
+                    except Exception as e: # DSSP failures generate unnamed exceptions
+                        raise DescriptorException("dssp calculation",e)
+                    os.remove(ofile)
                 else:
-                    return False                    
-        #TODO: add exception handling to this part
-        cparser = PDB.PDBParser(PERMISSIVE=1,QUIET=True)
-        self.dssp = {'ALL':dict(oligomer)}
-        if len(self.struct[0].get_list()) == 1:
-            self.dssp[self.struct[0].get_list()[0].get_id()] = self.dssp['ALL']
+                    oligomer = dict(PDB.DSSP(self.struct[0],self.filename,self.dssp_path))
+                class chain_select(PDB.Select): #Needed for extracting each chain
+                    def accept_chain(self,c):
+                        if c.get_id() == chainid:
+                            return True
+                        else:
+                            return False                               
+                #Calculate DSSP for isolated chains
+                isolated = dict()
+                if len(self.struct[0].get_list()) == 1:
+                    isolated[self.struct[0].get_list()[0].get_id()] = oligomer
+                else:
+                    io = PDB.PDBIO()            
+                    io.set_structure(self.struct)
+                    for chain in self.struct[0]:
+                        # Make sure there are residues in this chain otherwise unnamed Exception
+                        if len([x for x in chain.get_residues() if x.get_id()[0]==' '])==0: continue
+                        # Generate random filename
+                        chainid = chain.get_id()
+                        cfile = "_".join([uuid.uuid4().hex,self.id,chainid])
+                        # Write isolated chain to random filename
+                        # Then calculate DSSP from it
+                        io.save(cfile, chain_select())
+                        tmp = self.parser.get_structure(chainid,cfile)
+                        try:
+                            isolated[chainid] = dict(PDB.DSSP(tmp[0],cfile,self.dssp_path))
+                        except Exception: # DSSP failures generate unnamed exceptions
+                            print "Warning, DSSP failed for {} isolated chain {}, setting equal to oligomer".format(self.id,chainid)
+                            isolated[chainid] = oligomer                        
+                        os.remove(cfile)
+                #Generate DSSP DataFrame
+                for res in oligomer:
+                    if res[1][0]!=" ": continue
+                    c = res[0]
+#                    try:
+#                        r = int(res[1][1])
+#                    except ValueError:
+#                        r = -999
+                    r = res[1][1]
+                    i = res[1][2]
+                    ss = oligomer[res][2]
+                    try:
+                        sasa = round(float(oligomer[res][3]),3)                       
+                        isosasa = round(float(isolated[c][res][3]),3)
+                    except ValueError: #TODO: Does this every happen?
+                        sasa = oligomer[res]
+                        isosasa = isolated[c][res][3]                                            
+                    dssp.append([c,r,i,ss,sasa,isosasa])                                                                              
+            except (OSError,DescriptorException) as e: # Generate a holder set on the fly
+                raise ParseWarning("DSSP Calculation","Failed DSSP for {}({})".format(self.inputstring,e))
+                dssp = list()
+                for c in self.struct[0]:
+                    for r in c:
+                        res = r.get_id()
+                        if res[0]!=' ': continue
+                        dssp.append([c.get_id(),res[1],res[2],'?',-999,-999])                   
+            self.dssp = pd.DataFrame(dssp,columns=self.res_header+HEADERS['dssp'])
+        if self.descriptors is None:
+            self.descriptors = self.dssp
         else:
-            for chain in self.struct[0]:
-                io = PDB.PDBIO()
-                io.set_structure(self.struct)
-                # Generate random filename
-                cfile = uuid.uuid4().hex
-                chainid = chain.get_id()
-                io.save(cfile, chain_select())
-                tmp = cparser.get_structure(chain,cfile)
-                self.dssp[chainid] = dict(PDB.DSSP(tmp[0],cfile,self.dssp_path))
-                os.remove(cfile)
+            self.descriptors = self.descriptors.merge(self.dssp,
+                                                          on=self.res_header)
+        self.header += HEADERS['dssp']                                                   
 
-    def get_holder(self,source=None):
+    def attach_descriptors(self, partner):
         '''
-        Placeholder features whenever a retrieval fails
-        1 argument, source: Sources: DSSP
-        If no source given, returns None
+        Attach descriptors to partner df
+        Requires a partner df
+        Does this by merge (chain/res#/icode) if not a holder
+        If holder, attaches using bind
+        returns the merged/binded result
         '''
-        if source=="DSSP":
-            return (-1,'?','?',-1,-1,-1,-1,-1,-1,-1,-1,-1,-1)
+        if self.descriptors is None:
+            return partner
+        if self.id == "Holder":
+            # Generate a holder descriptor table
+            desc_dict = dict()
+            nrow = len(partner.index)
+            for d in self.header:
+                desc_dict[d] = [HOLDERS[d]]*nrow
+            holder_desc = pd.DataFrame.from_dict(desc_dict)
+            holder_desc.set_index(partner.index)
+            return pd.concat([partner,holder_desc[self.header]],axis=1)          
         else:
-            return None            
-        
+            if self.filename=="url":
+                self.descriptors[self.header].to_csv("test1")
+                partner.to_csv("test2")
+                print self.res_header
+                print self.descriptors[self.res_header]
+                print partner[['structure','icode','chain']]
+                with open("tmp","a") as outfile:
+                    outfile.write("{}\ndf:{} = {}\npartner:{} = {}\n".format(self.id,list(self.descriptors[self.header]),self.descriptors[self.header].dtypes,list(partner),partner.dtypes))
+            print partner.merge(self.descriptors[self.header],how='left',on=self.res_header)
+            print self.descriptors[self.header]
+            print partner
+            return partner.merge(self.descriptors[self.header],
+                                 how='left',
+                                 on=self.res_header)                                                
+
     def get_dssp(self,chain,resnum,icode=" "):
         '''
         Get the DSSP for a particular residue
@@ -207,25 +336,72 @@ class Structure(object):
         First dict is isolated chain
         Second dict is from oligomer
         '''
-        res_tup = (chain,(" ", resnum, icode))
-        try:
-            if self.struct is None:
-                raise KeyError("no loaded pdb")
-            dssp_tup_chain = self.dssp[chain][res_tup]
-            dssp_tup_olig = self.dssp['ALL'][res_tup]
-        except KeyError as e:
-            print "Warning, unable to calculate DSSP for {}:{}{}({})".format(chain,resnum,icode,e)
-            print "Returning Placeholder values"
-            dssp_tup_chain = self.get_holder("DSSP")
-            dssp_tup_olig = self.get_holder("DSSP")
-        return ({'ss': dssp_tup_chain[2], 'sasa': dssp_tup_chain[3]},
-                {'ss': dssp_tup_olig[2], 'sasa': dssp_tup_olig[3]})
-
-    def __str__(self):
-        if self.struct is None:
-            sid = "None"
+        if self.id == "Holder":
+            print "Warning, getting dssp from holder, returning holder value"
+            return pd.DataFrame([[chain,resnum,icode,"?",-999,-999]],
+                                columns=self.res_header+HEADERS['dssp'])
+        elif self.dssp is None:
+            print "Warning, dssp not run returning holder value"
+            return pd.DataFrame([[chain,resnum,icode,"?",-999,-999]],
+                                columns=self.res_header+HEADERS['dssp'])
         else:
-            sid = self.struct.get_id()
+            return self.dssp[(self.dssp.chain==chain) &
+                             (self.dssp.structure_position==resnum) &
+                             (self.dssp.icode==icode)]                                
+
+    def __str__(self):       
         return "{} ({}), dssp: {}, ligand: {}, nucleotide: {}, peptide: {}".format(
-            sid, self.filename, self.dssp is not None, self.ligand is not None,
+            self.id, self.filename, self.dssp is not None, self.ligand is not None,
             self.nucleotide is not None, self.peptide is not None)
+
+def add_descriptors(df,descriptors):
+    '''
+    Add artifacts to dataframe
+    Takes dataframe and a list of descriptors
+    '''
+    try:
+       assert 'structure_position' in list(df.columns.values)
+       assert 'icode' in list(df.columns.values)
+       assert 'structure' in list(df.columns.values)
+       assert 'chain' in list(df.columns.values)
+    except AssertionError:
+       raise DescriptorException("initialization",
+                                 "dataframe passed to add_descriptors missing required column(s)")
+    if 'artifacts' in descriptors:
+        a = False
+    else:
+        a = True                
+    structures = df.structure.drop_duplicates()
+    allstructs = None
+    for model in structures:
+        if model=="Uniprot":
+            # Uniprot is holder structure
+            structure = Structure()
+        elif len(model)==4:
+            # PDB needs to be retrieved
+            structure = Structure(url=model,artifacts=a)           
+        else:
+            # Model is local file
+            pdbfile = model
+            structure = Structure(filename=pdbfile,artifacts=a)                                   
+        if 'dssp' in descriptors:
+            structure.add_dssp()
+        if 'ligand' in descriptors:
+            pass
+        if 'peptide' in descriptors:
+            pass
+        if 'nucleotide' in descriptors:
+            pass
+        if 'unp' in descriptors:
+            pass           
+        current_df = structure.attach_descriptors(df[df.structure==model][
+                                                     ['structure',
+                                                     'chain',
+                                                     'structure_position',
+                                                     'icode']])
+        if allstructs is None:
+            allstructs = current_df
+        else:
+            allstructs = pd.concat([current_df,allstructs])                                                                 
+    return pd.merge(df,allstructs,how='left',
+                    on=['structure','chain','structure_position','icode'])

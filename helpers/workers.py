@@ -4,6 +4,7 @@ import alignments
 import IO
 import traceback
 from exceptions import *
+from descriptors import Structure, add_descriptors, HEADERS
 
 VAR_STRUCT_HEADER = ["transcript","uniprot","isoform",
                "transcript_identity","transcript_position",
@@ -69,11 +70,16 @@ def worker(variant, datasets, arguments):
     vartables = list()
     completed = list()
     multiproc = arguments.num_procs > 1
+    
     if multiproc:
         lock = mp.Lock()
     else:
         lock = None
     current_transcript, current_protein, variant_list = variant
+    print "Casting {} variants".format(current_transcript)
+    var_df_header = VAR_STRUCT_HEADER
+    for d in arguments.descriptors:
+        var_df_header += HEADERS[d]
     try:
         uniprot,isoform = current_protein
         astring = "{}_{}".format(current_transcript,uniprot)
@@ -114,7 +120,7 @@ def worker(variant, datasets, arguments):
                 current_unp['structure'] = "Uniprot"
                 current_unp['chain'] = "-"
                 current_unp['structure_aa'] = "-"
-                current_unp['structure_position'] = 0
+                current_unp['structure_position'] = current_unp['uniprot_position']
                 current_unp['icode'] = " "
                 current_unp['template_identity'] = 1.0
                 current_unp['structure_identity'] = 1.0
@@ -124,11 +130,14 @@ def worker(variant, datasets, arguments):
                 unp_df_out.sort_values(by=["structure","chain","transcript_position",
                                            "structure_position","icode"],inplace=True)
                 var_unp_df = unp_df_out.merge(variant_table,how='inner',on=['transcript_position'])
+
+                #Add the descriptors (holders for unp since not structure)
                 var_unp_df.sort_values(by=['structure','chain','transcript_position',
                                            'structure_position','icode'],inplace=True)                                                          
+       
                 alntables.append([unp_df_out,ALN_STRUCT_HEADER])
-                vartables.append([var_unp_df,VAR_STRUCT_HEADER])           
-
+                vartables.append([var_unp_df,var_df_header])           
+                
         if not arguments.nopdb:
             # Get the PDB table from SIFTS
             pdbs = gather_sifts(uniprot, isoform, datasets['sifts'])
@@ -136,26 +145,16 @@ def worker(variant, datasets, arguments):
                 raise WorkerException("sifts parsing", "no residues returned")
             # Generate the PDB tables
             pdb_df = unp_df.merge(pdbs,how="inner",on=['uniprot_position']).round({'structure_identity':1})
+            pdb_df.loc[pdb_df.icode == "", 'icode'] = " "
             pdb_df.sort_values(by = ["structure","chain","transcript_position",
                                      "structure_position","icode"],inplace=True)
             var_pdb_df = pdb_df.merge(variant_table,how='inner',on=['transcript_position'])
             var_pdb_df = var_pdb_df[var_pdb_df['structure_position']!=' ']
+            var_pdb_df.structure_position = pd.to_numeric(var_pdb_df.structure_position,errors='coerce')
             var_pdb_df.sort_values(by = ["structure","chain","transcript_position",
                                      "structure_position","icode","varcode"],inplace=True)
             alntables.append([pdb_df,ALN_STRUCT_HEADER])
-            vartables.append([var_pdb_df,VAR_STRUCT_HEADER])
-        for x in ALN_STRUCT_HEADER:
-            if x not in list(pdb_df):
-                print "{} missing from pdbdf".format(x)
-        for x in VAR_STRUCT_HEADER:
-           if x not in list(var_pdb_df):
-              print "{} missing from varpdbdf".format(x)               
-        for x in ALN_STRUCT_HEADER:
-            if x not in list(unp_df_out):
-                print "{} missing from unpdf".format(x)
-        for x in VAR_STRUCT_HEADER:
-           if x not in list(var_unp_df):
-              print "{} missing from varunpdf".format(x)               
+            vartables.append([var_pdb_df,var_df_header])
 
     except WorkerException as e:
         if multiproc:
@@ -170,7 +169,8 @@ def worker(variant, datasets, arguments):
         if multiproc:
             lock.release()
         return False
-    except Exception:
+    except Exception as e:
+        print e
         if multiproc:
             lock.acquire()
         IO.write_failures([current_transcript, uniprot], traceback.format_exc())
@@ -234,10 +234,12 @@ def worker(variant, datasets, arguments):
            
             var_model_df = model_df.merge(variant_table,how='inner',on=['transcript_position'])
             var_model_df = var_model_df[var_model_df['structure_position']!=' ']
+            #Add descriptors to aligned positions
             var_model_df.sort_values(by = ["structure","chain","transcript_position",
                                          "structure_position","icode","varcode"],inplace=True)     
             alntables.append([model_df,ALN_STRUCT_HEADER])
-            vartables.append([var_model_df,VAR_STRUCT_HEADER])
+            vartables.append([var_model_df,var_df_header])
+                           
     except WorkerException as e:
         if multiproc:
             lock.acquire()
@@ -259,7 +261,16 @@ def worker(variant, datasets, arguments):
             lock.release()
         return False   
                 
-    # Finished alignments, now write tables
+    # Finished alignments, now add descriptors and write tables
+    if len(arguments.descriptors)>0:
+        old_vartables = vartables
+        vartables = list()
+        for table in old_vartables:
+            
+            fulltable = add_descriptors(table[0],arguments.descriptors)
+            fulltable.sort_values(by = ["structure","chain","transcript_position",
+                                        "structure_position","icode","varcode"],inplace=True)
+            vartables.append([fulltable,var_df_header])                                    
     if multiproc:
         lock.acquire()
     if not arguments.noalign:
@@ -356,7 +367,7 @@ def gather_sifts(uniprot,isoform,sifts):
             all_residues = pd.concat([all_residues,resdf],copy=False)            
     if all_residues is None:
         all_residues = pd.DataFrame.from_dict(None)
-    all_residues.to_csv(open("tempstr","w"))
+#    all_residues.to_csv(open("tempstr","w"))
     return all_residues
 
 def expand_variants(variants,trans_seq):

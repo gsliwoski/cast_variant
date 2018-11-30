@@ -1,4 +1,4 @@
-from os import path
+from os import path,remove
 from exceptions import *
 import gzip
 import sys
@@ -732,6 +732,11 @@ def write_complete(varcodes):
     with open(outfiles["completed"],"a+") as outfile:
         outfile.write("\n".join(x for x in varcodes)+"\n")
 
+def remove_previous_files():
+    for f in outfiles:
+        if path.isfile(outfiles[f]):
+            remove(outfiles[f])
+            
 ##### MODELS #####
 
 parser = PDB.PDBParser(PERMISSIVE=1)
