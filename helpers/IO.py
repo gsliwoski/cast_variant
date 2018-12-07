@@ -28,8 +28,23 @@ PDB_PATH = "/dors/capra_lab/data_clean/pdb/2018-04-11/structures/" #All PDB stru
 SWISS_PATH = "/dors/capra_lab/data_clean/swissmodel/2018-07-23/SWISS-MODEL_Repository/"
 # SWISSModel hierarchy should be in format as downloaded and required for pickling sequences
 
+# Add each descriptor to applications list
+# If descriptor requires no application, then set to None
+# Used to check for presence before beginning
+DESCRIPTOR_APPLICATIONS = {'dssp': DSSP,
+                           'pdb': PDB_PATH,
+                           'model': SWISS_PATH,
+                           'ligand':None,
+                           'nucleotide':None,
+                           'peptide':None}
+                           
 # Ensure that the required datasets are available
-def check_seqs(nomodel,nopdb):
+def check_seqs(arguments):
+    nomodel = arguments.nomodel
+    nopdb = arguments.nopdb
+    debug = arguments.debug
+    if debug:
+        print "DEBUG: I/O: checking for sequence pickles"
     for x in [SWISS_SEQ,
               UNP_SEQ,
               UNP_CANONICAL,
@@ -48,24 +63,32 @@ def check_seqs(nomodel,nopdb):
                                    "sifts dataset required for PDB".format(
                                                                     SIFTS_PATH)
                                                                                
-def check_applications(name):
+def check_applications(arguments):
     '''
     Check paths for required descriptor files/applications
     name = 'DSSP' or 'PDB' or 'SWISS'
     '''
-    name_map = {'DSSP':DSSP,'PDB':PDB_PATH,'SWISS':SWISS_PATH}
-    assert path.isfile(name_map[name]) or \
-           path.isdir(name_map[name]),\
-        "{} not found, remove {} dependent descriptors".format(
-            name_map[name],
-            name)
+    names = [DESCRIPTOR_APPLICATIONS[x] for x in arguments.descriptors]
+    # Models need to be present, TODO: Add ability to retrieve models from url
+    if not arguments.nomodel:
+        names.append(DESCRIPTOR_APPLICATIONS['model'])
+    for name in names:
+        if name is None: continue
+        if arguments.debug:
+            print "DEBUG: IO: check_applications for {}".format(name)
+        assert path.isfile(name) or \
+               path.isdir(name),\
+            "dependent {} not found".format(name)
                 
 
 # These are the names of the all files that will be written to
 outfiles = dict()
-def define_output(varfilename):
+def define_output(arguments):
     global outfiles
+    varfilename = arguments.variants
     basefile = path.splitext(path.basename(varfilename))[0]
+    if arguments.debug:
+        print "DEBUG: IO: define_output for basename {}".format(basefile)
     outfiles = {
         'skipped': basefile+".skipped",
         'alignments': basefile+".alignments",
@@ -77,27 +100,36 @@ def define_output(varfilename):
 
 # Read in the variant file
 def load_variants(args):
+    debug = args.debug
+    debug_head = "DEBUG: IO: load_variants: "
+    if debug:
+        print debug_head+"loading variants from {}".format(args.variants)
+    a = "y"
     varfilename = args.variants
     # If a raw VEP was given, select one consequence per coding variant
     # and then parse
     if args.vep:
+        if args.debug:
+            print debug_head+"Converting VEP file to variants"
         vepoutfile = path.splitext(path.basename(varfilename))[0]+".vep_selected"
         if path.isfile(vepoutfile):
             print "Found potential selected file {} already created, overwrite it?".format(vepoutfile)
-        try:
-            a = raw_input("(y/n/q) ").lower()[0]
-        except SyntaxError:
-            a = "NA"            
-        while a not in ["y","n","q"]:
             try:
                 a = raw_input("(y/n/q) ").lower()[0]
             except SyntaxError:
-                a = "NA"
+                a = "NA"            
+            while a not in ["y","n","q"]:
+                try:
+                    a = raw_input("(y/n/q) ").lower()[0]
+                except SyntaxError:
+                    a = "NA"
         if a=="q":
             sys.exit("Canceled")
-        if a=="y":                        
-            fullvep = parse_vepfile(varfilename)
-            unique_vep = process_vep(fullvep)
+        if a=="y":                 
+            if args.debug:
+                print debug_head+"Previous var file not found, proceeding with process VEP"       
+            fullvep = parse_vepfile(args)
+            unique_vep = process_vep(fullvep,args.debug)
             try:
                 if len(unique_vep.index) == 0:
                     raise ParseException("VEP file","No variants selected from VEP file")
@@ -117,8 +149,10 @@ def load_variants(args):
                               header=False,
                               index=False)                                   
             print "{} Selected vars written to standard varfile {}".format(
-                        len(unique_vep.index),
-                        vepoutfile)
+                            len(unique_vep.index),
+                            vepoutfile)
+        if debug:
+            print debug_head+"Calling parse_varfile with created varfile {}".format(vepoutfile)
         variants = parse_varfile(open(vepoutfile),args)        
 
     else: # Otherwise, parse it directly
@@ -129,6 +163,8 @@ def load_variants(args):
             sys.exit("Unable to open {}: {}".format(varfilename,e))
         # Try to parse it
         try:
+            if debug:
+                print debug_head+"Calling parase_varfile with previously created {}".format(varfilename)
             variants = parse_varfile(infile,args)
         except ParseException as e:
             print "Critical failure:"
@@ -136,7 +172,7 @@ def load_variants(args):
     return variants
 
 # Process a single variant line
-def process_variant(variant,expand):
+def process_variant(variant,expand,debug):
     '''
     If expand is set:
     Expands usable non-missense variants to list all residues affected.
@@ -146,6 +182,9 @@ def process_variant(variant,expand):
     Takes the list of columns of the current variant line and returns
     [position, ref, alt,annotation(for expanding if necessary),varcode]
     '''
+    debug_head = "DEBUG: IO: process_variant: "
+    if debug:
+        print debug_head+"processing line {}".format(variant)
     if variant[-2].upper() in [""," ","-", ".","?","NA","NONE","UNASSIGNED"]:
         return ["no uniprot assigned"]
     annotation = variant[0].upper().replace(" ","_")
@@ -167,6 +206,12 @@ def process_variant(variant,expand):
             # Sometimes VEP will give AA/AB or AA/BA as missense
             # with position 1-2 instead of 1 or 2
             elif len(refaa)==2 and len(altaa)==2:
+                if refaa[0]!=altaa[0] and refaa[1]!=altaa[1]:
+                    if debug:
+                        print debug_head+"skipping double missense"
+                    return ["double missense variant"]
+                if debug:
+                    print debug_head+"fixing bad missense {} {}/{}".format(position,refaa,altaa)
                 position1,position2 = position.split("-")
                 #TODO: Adjust these checks if one day desire synonymous mapping
                 if refaa[0]==altaa[0]:
@@ -176,8 +221,12 @@ def process_variant(variant,expand):
                 else:
                     refaa,altaa = refaa[0],altaa[0]
                     position = int(position1)
+                if debug:
+                    print debug_head+"resolved to {} {}/{}".format(position,refaa,altaa)
             # Anything else is a bad missense and outputs warning and skips
             else:
+                if debug:
+                    print debug_head+"unusual missense failed: {}/{}".format(refaa,altaa)
                 raise ValueError
         # Stop losses and changes to start can't be mapped
         elif "STOP_LOST" in annotation or "STOPLOST" in annotation:
@@ -192,11 +241,15 @@ def process_variant(variant,expand):
             if len(altaa)>1:
                 raise ValueError
     except ValueError:
+        if debug:
+            print debug_head+"parse error for {}".format(variant)
         raise ParseWarning(
             "variant file","bad variant column: {}".format(variant[3]))               
     except ParseWarning as e:
         print e.fullmsg
         return [e.fullmsg]
+    if debug:
+        print debug_head+"Formatted variant to {} {}/{} {}".format(position,refaa,altaa,annotation)        
     return [position,refaa,altaa,annotation]
     
 # Iterate through variant lines    
@@ -224,10 +277,13 @@ def parse_varfile(varfile,args):
     KEY = variant identifier (transcript or protein)
     ENTRY = [[uniprot, isoform],[list of variants]]
     '''
+    debug_head = "DEBUG: IO: parse_varfile: "
+    debug = args.debug
     expand = args.expand
     skipped = list()
     variants = dict()
     count = 0
+    
     for line in varfile:
         # Skip blank lines
         # Remove comments
@@ -264,13 +320,15 @@ def parse_varfile(varfile,args):
 
             
 #            if continue_flag and "{}_{}".format(varcode, in completed: continue                               
-            current_var = process_variant(line,expand)           
+            current_var = process_variant(line,expand,debug)           
             #Use ENST identifier if its ensembl otherwise protein identifier
             identifier = line[1] if line[1].startswith("ENST") else line[4]
         except ParseWarning as e:
             print e.fullmsg
             continue      
         if len(current_var)<3:
+            if debug:
+                print debug_head+"skipping bad variant length {}".format(current_var)
             skipped.append("\t".join(line+current_var))
         elif identifier in variants:
             count += 1
@@ -287,14 +345,22 @@ def parse_varfile(varfile,args):
     return variants
 
 completed = list()
-def filter_complete(variants):
+def filter_complete(variants,debug):
+    debug_head = "DEBUG: IO: filter_complete: "
     global completed
     keptvars = dict()
     if path.isfile(outfiles['completed']) and len(completed)==0:
+        if debug:
+            print debug_head+"Loading completed variants from".format(outfiles['completed'])
         with open(outfiles['completed']) as infile:
             completed = [x.strip() for x in infile]
     if len(completed)==0:
+        if debug:
+            print debug_head+"completed file was empty"
         return variants
+    if debug:
+        print debug_head+"Filtering {} completed variants from {} transcripts".format(len(completed),len(variants))
+    kv = 0
     for trans in variants:
         filtered = list()
         for var in variants[trans][-1]:
@@ -303,21 +369,28 @@ def filter_complete(variants):
                 continue
             else:
                 filtered.append(var)
+                kv += 1
         if len(filtered)>0:
-            keptvars[trans] = [variants[trans][0],filtered]                
+            keptvars[trans] = [variants[trans][0],filtered]
+    print "skipped {} completed variants".format(len(completed))
+    if debug:
+        print debug_head+"{} variants in {} transcripts remain".format(kv,len(keptvars))
     return keptvars
 
 # Parse raw VEP output file
 
-def parse_vepfile(vepfile):
+def parse_vepfile(args):
     '''
     Reads in a raw VEP file
-    Takes a filename and first checks if necessary columns are there
+    First checks if necessary columns are there
     Then, reads it in as a pandas DataFrame, prepares the columns,
     and filters for coding variants
     Returns prepared dataframe
     '''
     # Check to make sure the necessary columns are there
+    vepfile = args.variants
+    if args.debug:
+        print "DEBUG: IO: Parsing VEP file {}".format(vepfile)
     with open(vepfile) as infile:
         header = infile.readline().strip().split()
     required_cols = ["#Uploaded_variation",
@@ -334,21 +407,27 @@ def parse_vepfile(vepfile):
                      "ENSP",
                      "SWISSPROT",
                      "TREMBL"]
+    if args.debug:
+        print "DEBUG: IO: Checking for required VEP columns"
     for x in required_cols:
         if x not in header:
             raise ParseException(
                 "Raw VEP file",
                 "required column {} missing from header".format(x))
+    if args.debug:
+        print "DEBUG: IO: Reading CSV into dataframe"
     df = pd.read_csv(open(vepfile),sep="\t")[required_cols]
     df.rename(columns={"#Uploaded_variation":"Varcode",
                        "Feature":"Transcript",
                        "ENSP":"Protein"},inplace=True)
+    if args.debug:
+        print "DEBUG: IO: Filtering for non-synonymous (AA field >1)"
     df = df[df["Amino_acids"].str.len()>1]
     print "{} unique coding variants loaded".format(df["Varcode"].nunique())
     return df
 
     
-def process_vep(vep):
+def process_vep(vep,debug):
     '''
     Takes the full VEP dataframe and selects a single
     consequence per variant, order of preference:
@@ -403,37 +482,46 @@ def process_vep(vep):
     that is not in the sequences set but is, for example, canonical according to uniprot. In this
     case, a transcript present in the sequence set could be preferred.
     '''        
+    debug_head = "DEBUG: IO: process_vep: "
+    if debug:
+        print debug_head+"processing raw df with {} rows".format(len(vep.index))
     # canonical identifies the canonical transcript used by uniprot
-    canonical = load_canonical()
+    canonical = load_canonical(debug)
     # sec2prime allows filtering out any secondary uniprot ACs
-    sec2prime = load_sec2prime()
+    sec2prime = load_sec2prime(debug)
     
     # Attach the uniprot names
+    if debug:
+        print debug_head+"merging uniprot names to transcripts"
     vep = vep.merge(canonical,how="left",on=["Transcript","Protein"]) 
-
-    # Filter out anything that doesn't have a uniprot name
-    # Keep those without a uniprot name for use in case they have one
-    # assigned by VEP
-    vep_nullunp = vep[vep.Uniprot.isnull()]
-    vep = vep[vep.Uniprot.notnull()]
-    nrows = len(vep.index)
     try:
         if len(vep.index) == 0:
             raise ParseException("VEP file","Failed to extract variants from VEP file")
     except ParseException as e:
         sys.exit(e.fullmsg)  
 
-#    print "{} unique coding variants were mapped to a uniprot".format(
-#                                                        vep.Varcode.nunique())
+    # Filter out anything that doesn't have a uniprot name
+    # Keep those without a uniprot name for use in case they have one
+    # assigned by VEP
+    if debug:
+        print debug_head+"extracting null uniprots into separate df"
+    vep_nullunp = vep[vep.Uniprot.isnull()]
+    vep = vep[vep.Uniprot.notnull()]
+    nrows = len(vep.index)
+    if debug:
+        print debug_head+"result withunp {} rows; nullunp df {} rows".format(len(vep.index),len(vep_nullunp.index))    
 
     # Filter any secondary uniprot AC's
-    secondary = [x[0] for x in load_sec2prime()]
+    if debug:
+        print debug_head+"Removing secondary uniprots"
+    secondary = [x[0] for x in sec2prime]
     vep = vep[~vep.Uniprot.isin(secondary)]
-    
+    if debug:
+        print debug_head+"Result df {} rows".format(len(vep.index))
+
     # Now select 1 consequence per variant
     # Note: There may be mulitple consequences if they map to
     # different uniprots (different proteins, same gene)
-
     def addvars(vep,vep_final,group): #append to final set and filter from initial
         vep_final = pd.concat([vep_final,
                 group.apply(lambda x: x.sort_values(["quickpos","Transcript"],
@@ -444,6 +532,8 @@ def process_vep(vep):
     
     #Need to add a quickposition column that is the int of the first
     # position for finding max position instance for repeats
+    if debug:
+        print debug_head+"Adding position column"
     vep["quickpos"] = vep.Protein_position.str.extract('(\d+)',expand=False).astype(int)
     vep_nullunp["quickpos"] = vep_nullunp.Protein_position.str.extract('(\d+)',expand=False).astype(int)
 
@@ -457,17 +547,14 @@ def process_vep(vep):
     # one and therefore no isoform is designated. However, there is an edge
     # case where it is unassigned even though there are assignments
     # So, need to deal with these after and remove them for now
+    if debug:
+        print debug_head+"Separating unassigned transcripts"
     vep_unassigned = vep[(vep.Canonical=="Unassigned")\
                           & (pd.to_numeric(vep.nIsoforms)>0)]
     vep = vep[~((vep.Canonical=="Unassigned")\
                           & (pd.to_numeric(vep.nIsoforms)>0))]   
-    print "vep"
-    print vep[vep.Varcode=="1:g.155187269G>A"]
-    print "unassigned"
-    print vep_unassigned[vep_unassigned.Varcode=="1:g.155187269G>A"]    
-    print "nullunp"
-    print vep_nullunp[vep_nullunp.Varcode=="1:g.155187269G>A"]    
-    
+    if debug:
+        print debug_head+"Result: {} rows assigned; {} rows unassigned".format(len(vep.index),len(vep_unassigned.index))
     for outer in ["YES","Unassigned","NO"]:
         for inner in ["ENST","NM","XM"]:
             if len(vep.index)==0: break
@@ -480,10 +567,14 @@ def process_vep(vep):
                                                         ascending=False).head(1))
                 vep = vep[~vep.Varcode.isin(vep_final.Varcode)]
             else:
-                vep,vep_final = addvars(vep,vep_final,group)   
+                vep,vep_final = addvars(vep,vep_final,group)
+            if debug:
+                print debug_head+"Selected {} rows; remaining {} rows".format(len(vep_final.index),len(vep.index))                   
     # Deal with any of potential cases where an unassigned transcript is only hit
     # in a uniprot with multiple isoforms
     vep_unassigned = vep_unassigned[~vep_unassigned.Varcode.isin(vep_final.Varcode)]
+    if debug:
+        print debug_head+"processing remaining {} unassigned".format(len(vep_unassigned.index))
     for inner in ["ENST","NM","XM"]:
         if len(vep_unassigned.index)==0: break
         group = vep_unassigned[vep_unassigned.Transcript.str.startswith(inner)]\
@@ -491,7 +582,9 @@ def process_vep(vep):
         current_vars = group.apply(lambda x: x.sort_values(["quickpos","Transcript"],
                                              ascending=False).head(1))
         vep_final = pd.concat([vep_final,current_vars])
-        vep_unassigned = vep_unassigned[~vep_unassigned.Varcode.isin(vep_final.Varcode)]        
+        vep_unassigned = vep_unassigned[~vep_unassigned.Varcode.isin(vep_final.Varcode)]
+        if debug:
+            print debug_head+"Selected {} rows; remaining unassigned {} rows".format(len(vep_final.index),len(vep_unassigned.index))      
     
     # Step 8: select any remaining variants that could not
     # be assigned a uniprot entry based on the read in uniprot data.
@@ -501,6 +594,8 @@ def process_vep(vep):
     # program were considered first and anything left over the uniprot is 
     # taken from VEP
     vep_nullunp = vep_nullunp[~vep_nullunp.Varcode.isin(vep_final.Varcode)]
+    if debug:
+        print debug_head+"Processing {} rows without uniprot".format(len(vep_nullunp.index))
     for outer in ["SWISSPROT","TREMBL"]:
         for inner in ["ENST","NM","XM"]:
             if len(vep_nullunp.index)==0: break
@@ -518,7 +613,12 @@ def process_vep(vep):
                                            vep_final[outer],
                                            vep_final.Isoform)                                          
             vep_nullunp = vep_nullunp[~vep_nullunp.Varcode.isin(vep_final.Varcode)]
-
+            if debug:
+                print debug_head+"Selected {} rows: remaining nounp {} rows".format(len(vep_final.index),len(vep_nullunp.index))
+    # Finally, replace all "Unassigned" isoforms with the uniprot entry
+    vep_final["Isoform"] = npwhere(vep_final.Isoform=="Unassigned",
+                                   vep_final.Uniprot,
+                                   vep_final.Isoform)
     print "{} unique variants with uniprot assignment selected".format(
                                             vep_final.Varcode.nunique())
     vep = pd.concat([vep,vep_nullunp,vep_unassigned])
@@ -570,13 +670,17 @@ def load_models(source):
     return models
 
 # Load table of canonical uniprot isoforms
-def load_canonical():
+def load_canonical(debug):
+    if debug:
+        print "DEBUG: IO: load_canonical {}".format(SEQ_PATH+UNP_CANONICAL)
     df = pd.read_csv(open(SEQ_PATH+UNP_CANONICAL),sep="\t")
     df.drop_duplicates(inplace=True)
     return df
 
 # Load secondary to primary AC mapping
-def load_sec2prime():
+def load_sec2prime(debug):
+    if debug:
+        print "DEBUG: IO: load_sec2prime {}".format(SEQ_PATH+UNP_MAP)
     with open(SEQ_PATH+UNP_MAP) as infile:
         sec2prime = [x.strip().split() for x in infile]    
     return sec2prime
@@ -741,7 +845,7 @@ def remove_previous_files():
 
 parser = PDB.PDBParser(PERMISSIVE=1)
 
-def load_model(modelfile):
+def load_model(modelfile,debug):
     '''Loads the model file and generates a fasta
        with dashes for any skipped residue #'s
        Takes a filename and returns a dict with
@@ -750,8 +854,13 @@ def load_model(modelfile):
        chain: chainID (only uses first chain if multiple)
        icodes: sequence of icodes (' ' for none)
        resnums: list of residue numbers'''
+    debug_head = "DEBUG: IO: load_model: "
+    if debug:
+        print debug_head+"Loading model {}".format(modelfile)
     structure = parser.get_structure("Model",modelfile)
     chainID,complex_state = model_information(modelfile)
+    if debug:
+        print debug_head+"model has chainID: {}, complex_state: {}".format(chainID,complex_state)
     chain = structure[0][chainID]
     resnum = 0
     fasta = ""
@@ -770,6 +879,8 @@ def load_model(modelfile):
         fasta += aa
         icodes += icode
         resnums.append(resnum)
+    if debug:
+        print debug_head+"{} has resnums".format(modelfile, resnums)        
     return {'filename':modelfile,
             'fasta':fasta,
             'chain':chainID,

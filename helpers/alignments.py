@@ -20,7 +20,7 @@ class Alignment(object):
     such as numbering and icodes that are adjusted to account for gaps
     Can also get identity and final dataframe
     '''
-    def __init__(self, seq1, seq2, name1='raw1', name2='raw2'):
+    def __init__(self, seq1, seq2, debug, name1='raw1', name2='raw2'):
         self.identical = seq1==seq2
         self.left_name = name1
         self.right_name = name2
@@ -33,20 +33,32 @@ class Alignment(object):
         self.gap_extend = GAP_EXTEND
         self.matrix = MATRIX
         self.current = False # df up-to-date?
+        self.debug = debug
+        self.debug_head = "DEBUG: alignments: Alignment: "
         if self.left_name == self.right_name:
             raise AlignException("pairwise aln failed",
                                  "provided identifiers can't be identical")
-        
+       
         self.left_sequence['nAA'] = len([x for x in seq1 if x!="-"])
         self.right_sequence['nAA'] = len([x for x in seq2 if x!="-"])
         seq1 = seq1.replace("-","X")
         seq2 = seq2.replace("-","X")
+        if self.debug:
+            print self.debug_head+"generated align class with {} ({} AA) and {} ({} AA)".format(
+                        self.left_name, 
+                        self.left_sequence['nAA'], 
+                        self.right_name, 
+                        self.right_sequence['nAA'])
         try:
             if self.identical:
                 self.left_sequence['aligned'] = [x for x in seq1]
                 self.right_sequence['aligned'] = [x for x in seq2]
                 self.matches = len(seq1)
+                if self.debug:
+                    print self.debug_head+ "Sequences are identical"
             else:
+                if self.debug:
+                    print self.debug_head+"doing pairwise alignment"
                 l,r = pairwise2.align.globalds(
                                              seq1,
                                              seq2,
@@ -59,7 +71,11 @@ class Alignment(object):
                 for x,y in zip(l,r):
                     if x==y and x!="-":
                         self.matches += 1
+                if self.debug:
+                    print self.debug_head+"Total matches: {}".format(self.matches)                        
         except Exception as e:
+            if self.debug:
+                print self.debug_head+"Alignment failed for {} and {}".format(self.left_name,self.right_name)
             raise AlignException("pairwise aln failed",
                                  ":".join("{}".format(x) for x in [e, e.args]))
         
@@ -76,8 +92,13 @@ class Alignment(object):
         Returns nothing
         '''
         currentseq = self.left_sequence if side=="left" else self.right_sequence
+        if self.debug:
+            print self.debug_head+"Adding seq {} to {} to with to account for gaps".format(name,side)
         naa = currentseq['nAA']
+
         if naa!=len(sequence):
+            if self.debug:
+                print self.debug_head+"Failed to add sequence, naa!=len(sequence)"
             raise AlignException("adding to aln failed",
                   "adding alignment with {} AA's a seq of length {}".format(
                                                                       naa,
@@ -88,7 +109,10 @@ class Alignment(object):
             print "Warning, attempting to add sequence with name already\
                   nothing added"
             return None
+        da = 0
         if self.identical:
+            if self.debug:
+                print self.debug_head+"sequences are identical"
             newseq = [x for x in sequence]
         else:
             newseq = list()
@@ -99,7 +123,10 @@ class Alignment(object):
                     i += 1
                     newseq.append(sequence[i])
                 else:
+                    da += 1
                     newseq.append(" ")                    
+        if self.debug:
+            print self.debug_head+"Added {} positions".format(da)
         currentseq[name] = newseq
         self.current = False
         return None
@@ -111,10 +138,14 @@ class Alignment(object):
         Before making the df, it looks at keys to see if any are identical
         between the two sides. If so, adds a left/right to them
         '''
+        if self.debug:
+            print self.debug_head+"Refreshing dataframe"
         newdict = dict()
         lk = set(self.left_sequence.keys())
         rk = set(self.right_sequence.keys())
         sharedkeys = lk.intersection(rk)
+        if self.debug:
+            print self.debug_head+"refreshing left sequence"
         for k in self.left_sequence.keys():                
             if k == 'aligned':
                 newkey = "{}_aa".format(self.left_name)
@@ -123,6 +154,8 @@ class Alignment(object):
             else:
                 newkey = k
             newdict[newkey] = self.left_sequence[k]
+        if self.debug:
+            print self.debug_head+"refreshing right sequence"
         for k in self.right_sequence.keys():
             if k == 'aligned':
                 newkey = "{}_aa".format(self.right_name)              
@@ -136,6 +169,8 @@ class Alignment(object):
 #            print x,newdict[x],len(newdict[x])
         self._dict = newdict            
         self._df = pd.DataFrame.from_dict(newdict)
+        if self.debug:
+            print self.debug_head+"refreshed dataframe to {} rows".format(len(self._df.index))
         self.current = True
 
     def remove(name,side="both"):
@@ -144,6 +179,8 @@ class Alignment(object):
         takes name of key and side (left,right,both)
         returns nothing
         '''
+        if self.debug:
+            print self.debug_head+"removing {} from {}".format(name,side)
         if side=="left" or side=="both":
             if name in self.left_sequence.keys():
                 self.left_sequence.pop(name)
@@ -160,6 +197,8 @@ class Alignment(object):
         inner [total is min len]
         return float
         '''
+        if self.debug:
+            print self.debug_head+"getting identity with respect to {}".format(side)
         if side=="left":
             m = self.left_sequence['nAA']
         elif side=="right":
@@ -168,7 +207,8 @@ class Alignment(object):
             m = max(self.left_sequence['nAA'],self.right_sequence['nAA'])
         else:
             m = min(self.left_sequence['nAA'],self.right_sequence['nAA'])
-        
+        if self.debug:
+            print self.debug_head+"{} matches over {} residues".format(self.matches,m)
         return float(self.matches)/m
         
     @property
@@ -189,6 +229,8 @@ class Alignment(object):
         '''
         Replace any X in sequence with -
         '''
+        if self.debug:
+            print self.debug_head+"replacing X with -"
         for i in range(len(self.left_sequence['aligned'])):
             if self.left_sequence['aligned'][i]=="X":
                 self.left_sequence['aligned'][i]="-"
@@ -196,19 +238,32 @@ class Alignment(object):
                 self.right_sequence['aligned'][i]="-"
                 
                        
-def filter_sequences(variants,destination,datasets):
+def filter_sequences(variants,destination,datasets,debug):
+    debug_head = "DEBUG: alignments: filter_sequences: "
     filtered = dict()
     completed = list()
+    debug_set = set()
+    lost = 0
     for var in variants:
         varcodes = [x[-1] for x in variants[var][-1]]
         if destination=='transcripts' and var not in datasets['transcripts']:
             IO.write_failures(
-                [var,variants[var][0][0]],"no seq found for {}".format(var))
+                [var,variants[var][0][0]],"no transcript seq found for {}".format(var))
             completed += varcodes
+            if debug:
+                debug_set.add(var)
+                lost += 1        
         elif destination=='uniprots' and variants[var][0][0] not in datasets['uniprots']:
             IO.write_failures(
-                [var,variants[var][0][0]],"no seq found for {}".format(var[0][0]))
+                [var,variants[var][0][0]],"no unp seq found for {}".format(variants[var][0][0]))
             completed += varcodes
+            if debug:
+                debug_set.add(var+"_"+variants[var][0][0])
+                lost += 1
         else:
             filtered[var] = variants[var]
+    if debug:
+        print debug_head+"{} variants from missing {} were lost:".format(lost, destination)
+        print debug_head+", ".join(debug_set)
+        print debug_head+"{} transcripts remain".format(len(filtered))
     return (filtered,completed)

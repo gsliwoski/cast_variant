@@ -43,16 +43,18 @@ parser.add_argument('--vep','-v',action='store_true',
                          'consequence per coding variant and then cast')
 parser.add_argument('--descriptors','-d',type=str,default="",
                     help='Positional descriptors, comma separated:\n'\
-                         'all = all possible descriptors without artifacts\n'\
-                         'dssp = descriptors from DSSP (SS, SASA, isolated SASA)\n'\
-                         'ds = distance to surface (0 if SASA>0.1)\n'\
-                         'unp = uniprot annotations, see README for list\n'\
-                         'ligand = distance from ligand (-1 if no ligand)\n'\
-                         'dna = distance from dna/rna (-1 if neither)\n'\
-                         'peptide = distance from binding peptide/protein'
-                         "artifacts = don't filter ligand/complex artifacts."\
+                         'all = all possible descriptors without artifacts;\n'\
+                         'dssp = descriptors from DSSP (SS, SASA, isolated SASA);\n'\
+                         'ds = distance to surface (0 if SASA>0.1);\n'\
+                         'unp = uniprot annotations, see README for list;\n'\
+                         'ligand = distance from ligand (-1 if no ligand);\n'\
+                         'nucleotide = distance from dna/rna (-1 if neither);\n'\
+                         'peptide = distance from binding peptide/protein;\n'\
+                         "artifacts = don't filter ligand/complex artifacts;\n"\
                          " By default, ligands or biounits previously identified as"\
                          " artifacts in other databases are filtered.")                                           
+parser.add_argument('--debug','-x',action='store_true',
+                    help='Debug mode, prints all steps')
 
 args = parser.parse_args()
 
@@ -60,43 +62,51 @@ assert not (args.nomodel and args.nopdb), \
     "You've selected neither PDB nor models, my job is done."
 
 # Check if necessary sequence files are there
-check_seqs(args.nomodel,args.nopdb)
-# Process the descriptors and check if DSSP is there if necessary
+check_seqs(args)
+# Process the descriptors and check if required applications are there
 if len(args.descriptors)>0:
-    if not args.nopdb:
-        check_applications("PDB")
-    if not args.nomodel:
-        check_applications("SWISS")
+    if args.debug:
+        print "DEBUG: cast_variant: Processing descriptors"
     args.descriptors = args.descriptors.lower().split(",")
     if 'all' in args.descriptors:
-        args.descriptors = ['dssp','ds','unp','ligand','dna',
+        args.descriptors = ['dssp','ligand','nucleotide',
                             'peptide'] #TODO: update as more descriptors implemented
-    if 'dssp' in args.descriptors:
-        check_applications('DSSP')
+    check_applications(args)
                 
 else:
+    if args.debug:
+        print "DEBUG: cast_variant: descriptor list defined as empty"
     args.descriptors = list()    
 # Define the names of the output files based on input filename
-define_output(args.variants)
+define_output(args)
 # Read in the variant dict
 variants = load_variants(args)
         
 # Filter out completed variants if set
 if args.completed:
-    variants = filter_complete(variants)
+    variants = filter_complete(variants,args.debug)
 
 try:
     if len(variants.keys())==0:
         raise ParseException("variants_file","No usable variants, check for a skipped/completed file.")
 except ParseException as e:
     sys.exit(e.fullmsg)        
-#print variants
 
+if args.debug and False: #Probably unnecessary
+    print "DEBUG: cast_variant: writing final variant list to file debugtmp.final_variants"
+    with open("debugtmp.final_variants","w") as outfile:
+        for t in variants:
+            outfile.write(t+"\n")
+            outfile.write("\n".join("{}".format(variants[t]) for t in variants))
+            outfile.write("\n")
+            
 # Load the necessary sequence sets
 # After loading each sequence set filter variants that
 # don't have the necessary sequence
 # 
 print "loading necessary datasets"
+if args.debug:
+    print "DEBUG: cast_variant: loading transcripts"
 transcripts = load_transcripts()
 
 datasets = {'transcripts':transcripts,
@@ -104,7 +114,9 @@ datasets = {'transcripts':transcripts,
             'models':None,
             'sifts':None}
 
-variants,earlycomp = filter_sequences(variants,'transcripts',datasets)
+if args.debug:
+    print "DEBUG: cast_variant: filtering variants for those without transcripts"
+variants,earlycomp = filter_sequences(variants,'transcripts',datasets,args.debug)
 
 try:
     if len(variants.keys())==0:
@@ -114,7 +126,7 @@ except ParseException as e:
 
 if not (args.nouniprot and args.nopdb):
     datasets['uniprots'] = load_uniprot()
-    variants,ec = filter_sequences(variants,'uniprots',datasets)
+    variants,ec = filter_sequences(variants,'uniprots',datasets,args.debug)
     earlycomp += ec
 try:
     if len(variants.keys())==0:

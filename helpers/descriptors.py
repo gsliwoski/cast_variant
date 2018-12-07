@@ -6,6 +6,7 @@ import os
 import uuid
 import pandas as pd
 import urllib2
+from numpy import where as npwhere
 
 INSULIN = "P01308"
 BETA2MG = "P61769"
@@ -169,6 +170,8 @@ class Structure(object):
         self.header = list()
         self.descriptors = None
         self.struct = None
+        self.debug = False
+        self.debug_head = ""
         if url:
             try:
                 self.filename = 'url'
@@ -195,7 +198,11 @@ class Structure(object):
             self.id = model.get_id()
             self.header += self.res_header
 
-    def add_dssp(self):
+    def flag_debug(self):
+        self.debug = True
+        self.debug_head = "DEBUG: descriptors: Structure({}): ".format(self.id)
+
+    def add_dssp(self,selected_chains):
         '''
         Adds DSSP features.
         DSSP ignores hetatoms but treats oligomers as single units
@@ -205,23 +212,32 @@ class Structure(object):
         DSSP takes files directly so need to create a temporary PDB file for
         each chain
         '''
+        if self.debug:
+            print self.debug_head+"Adding DSSP"
+            print self.debug_head+"Current header: {}".format(self.header)
         if self.id == "Holder":
-            self.header += HEADERS['dssp']
             c = HOLDERS.keys()
             h = ['?','?','?']+[HOLDERS[x] for x in c]
             c = self.res_header+c
             self.dssp = pd.DataFrame([h],columns=c)[self.res_header+HEADERS['dssp']]
+            if self.debug:
+                print self.debug_head+"added holder: {}".format(h)
         else:
+            genempty = False
             dssp = list()
             try:
                 #Calculate DSSP for Oligomer
                 #DSSP is pain in that it only takes files. Therefore, if this was created
                 # using a model or url, create a temporary file
+                if self.debug:
+                    print self.debug_head+"Oligomer DSSP"
                 if self.filename == "url" or self.filename == "model":
                     ofile = "_".join([uuid.uuid4().hex,self.id])
                     io = PDB.PDBIO()
                     io.set_structure(self.struct)
                     io.save(ofile)
+                    if self.debug:
+                        print self.debug_head+"wrote file for dssp"
                     try:                        
                         oligomer = dict(PDB.DSSP(self.struct[0],ofile,self.dssp_path))
                     except Exception as e: # DSSP failures generate unnamed exceptions
@@ -229,6 +245,8 @@ class Structure(object):
                     os.remove(ofile)
                 else:
                     oligomer = dict(PDB.DSSP(self.struct[0],self.filename,self.dssp_path))
+                if self.debug:
+                    print self.debug_head+"finished oligomer DSSP"
                 class chain_select(PDB.Select): #Needed for extracting each chain
                     def accept_chain(self,c):
                         if c.get_id() == chainid:
@@ -237,21 +255,34 @@ class Structure(object):
                             return False                               
                 #Calculate DSSP for isolated chains
                 isolated = dict()
+                badchains = list()
                 if len(self.struct[0].get_list()) == 1:
                     isolated[self.struct[0].get_list()[0].get_id()] = oligomer
                 else:
+                    if self.debug:
+                        print self.debug_head+"Running DSSP on isolated chains"
                     io = PDB.PDBIO()            
                     io.set_structure(self.struct)
                     for chain in self.struct[0]:
                         # Make sure there are residues in this chain otherwise unnamed Exception
-                        if len([x for x in chain.get_residues() if x.get_id()[0]==' '])==0: continue
+                        if len([x for x in chain.get_residues() if x.get_id()[0]==' ' and len(x)>2])==0:
+                            badchains.append(chain.get_id())
+                            if self.debug:
+                                print self.debug_head+"skipping no-res chain {}".format(chain.get_id())
+                            continue
                         # Generate random filename
                         chainid = chain.get_id()
+                        if chainid not in selected_chains:
+                            if self.debug:
+                                print self.debug_head+"skipping unwanted chain {}".format(chainid)
+                                continue
                         cfile = "_".join([uuid.uuid4().hex,self.id,chainid])
                         # Write isolated chain to random filename
                         # Then calculate DSSP from it
                         io.save(cfile, chain_select())
                         tmp = self.parser.get_structure(chainid,cfile)
+                        if self.debug:
+                            print self.debug_head+"write file for chain {}, calculating DSSP".format(chainid)
                         try:
                             isolated[chainid] = dict(PDB.DSSP(tmp[0],cfile,self.dssp_path))
                         except Exception: # DSSP failures generate unnamed exceptions
@@ -259,9 +290,14 @@ class Structure(object):
                             isolated[chainid] = oligomer                        
                         os.remove(cfile)
                 #Generate DSSP DataFrame
+                if self.debug:
+                    print self.debug_head+"generating DSSP dataframe"
+                    if len(badchains)>0:
+                        print self.debug_head+"skipping badchains {}".format(badchains)
                 for res in oligomer:
                     if res[1][0]!=" ": continue
                     c = res[0]
+                    if c not in selected_chains or c in badchains: continue
 #                    try:
 #                        r = int(res[1][1])
 #                    except ValueError:
@@ -277,21 +313,34 @@ class Structure(object):
                         isosasa = isolated[c][res][3]                                            
                     dssp.append([c,r,i,ss,sasa,isosasa])                                                                              
             except (OSError,DescriptorException) as e: # Generate a holder set on the fly
-                raise ParseWarning("DSSP Calculation","Failed DSSP for {}({})".format(self.inputstring,e))
+                print "Warning, DSSP calculation failed for {}: {}".format(self.id,e)
+                genempty = True
+#                raise ParseWarning("DSSP Calculation","Failed DSSP for {}({})".format(self.id,e))
+#            except ParseWarning as e:
+            if len(dssp)==0: # Generate a holder set on the fly if it's still empty
+                genempty = True
+                if self.debug:
+                    print self.debug_head+"DSSP set is empty, generating holder set"
+            if genempty:
                 dssp = list()
                 for c in self.struct[0]:
                     for r in c:
                         res = r.get_id()
                         if res[0]!=' ': continue
-                        dssp.append([c.get_id(),res[1],res[2],'?',-999,-999])                   
+                        dssp.append([c.get_id(),res[1],res[2],'?',-999,-999])                                 
             self.dssp = pd.DataFrame(dssp,columns=self.res_header+HEADERS['dssp'])
+            if self.debug:
+                print "Finished dssp datatable has {} rows".format(len(self.dssp.index))
         if self.descriptors is None:
             self.descriptors = self.dssp
         else:
             self.descriptors = self.descriptors.merge(self.dssp,
-                                                          on=self.res_header)
+                                                      on=self.res_header,
+                                                      how='outer')
         self.header += HEADERS['dssp']                                                   
-
+        if self.debug:
+            print self.debug_head+"Finished DSSP, current header: {}".format(self.header)
+            
     def attach_descriptors(self, partner):
         '''
         Attach descriptors to partner df
@@ -300,6 +349,8 @@ class Structure(object):
         If holder, attaches using bind
         returns the merged/binded result
         '''
+        if self.debug:
+            print self.debug_head+"Attaching descriptors to df with {} rows".format(len(partner.index))
         if self.descriptors is None:
             return partner
         if self.id == "Holder":
@@ -310,23 +361,29 @@ class Structure(object):
                 desc_dict[d] = [HOLDERS[d]]*nrow
             holder_desc = pd.DataFrame.from_dict(desc_dict)
             holder_desc.set_index(partner.index)
+            if self.debug:
+                print self.debug_head+"Concatenating holder descriptors"
             return pd.concat([partner,holder_desc[self.header]],axis=1)          
         else:
-            if self.filename=="url":
-                self.descriptors[self.header].to_csv("test1")
-                partner.to_csv("test2")
-                print self.res_header
-                print self.descriptors[self.res_header]
-                print partner[['structure','icode','chain']]
-                with open("tmp","a") as outfile:
-                    outfile.write("{}\ndf:{} = {}\npartner:{} = {}\n".format(self.id,list(self.descriptors[self.header]),self.descriptors[self.header].dtypes,list(partner),partner.dtypes))
-            print partner.merge(self.descriptors[self.header],how='left',on=self.res_header)
-            print self.descriptors[self.header]
-            print partner
-            return partner.merge(self.descriptors[self.header],
+#            if self.filename=="url":
+#                self.descriptors[self.header].to_csv("test1")
+#                partner.to_csv("test2")
+#                print self.res_header
+#                print self.descriptors[self.res_header]
+#                print partner[['structure','icode','chain']]
+#                with open("tmp","a") as outfile:
+#                    outfile.write("{}\ndf:{} = {}\npartner:{} = {}\n".format(self.id,list(self.descriptors[self.header]),self.descriptors[self.header].dtypes,list#(partner),partner.dtypes))
+#            print partner.merge(self.descriptors[self.header],how='left',on=self.res_header)
+#            print self.descriptors[self.header]
+#            print partner
+            newdf = partner.merge(self.descriptors[self.header],
                                  how='left',
-                                 on=self.res_header)                                                
-
+                                 on=self.res_header)
+            # Fill in any residues that were missing descriptors
+            for x in self.header:
+                if x in self.res_header: continue
+                newdf[x] = npwhere(newdf[x].isnull(),HOLDERS[x],newdf[x])
+            return newdf
     def get_dssp(self,chain,resnum,icode=" "):
         '''
         Get the DSSP for a particular residue
@@ -354,11 +411,14 @@ class Structure(object):
             self.id, self.filename, self.dssp is not None, self.ligand is not None,
             self.nucleotide is not None, self.peptide is not None)
 
-def add_descriptors(df,descriptors):
+def add_descriptors(df,descriptors,debug):
     '''
     Add artifacts to dataframe
     Takes dataframe and a list of descriptors
     '''
+    debug_head = "DEBUG: descriptors: add_descriptors: "
+    if debug:
+        print debug_head+"adding descriptors to df with {} rows".format(len(df.index))
     try:
        assert 'structure_position' in list(df.columns.values)
        assert 'icode' in list(df.columns.values)
@@ -370,22 +430,41 @@ def add_descriptors(df,descriptors):
     if 'artifacts' in descriptors:
         a = False
     else:
-        a = True                
+        a = True
     structures = df.structure.drop_duplicates()
+    if debug:
+        print debug_head+"After dropping duplicates, df has {} rows".format(len(df.index))
     allstructs = None
     for model in structures:
+        # Get chains and residues of interest to minimize calculation time
+        tmp_df = df[df.structure==model][['chain','structure_position','icode']]
+        chains_of_interest = list(tmp_df.chain.drop_duplicates())
+        if debug:
+            print debug_head+"Restricting to chains of interest: {}".format(chains_of_interest)
+
+        residues_of_interest = list(tmp_df.chain.astype(str)+"_"+tmp_df.structure_position.astype(str)+"_"+tmp_df.icode.astype(str))
+        if debug:
+            print debug_head+"Restricting to residues of interest: {}".format(residues_of_interest)                                              
         if model=="Uniprot":
             # Uniprot is holder structure
+            if debug:
+                print debug_head+"adding descriptors to uniprot"
             structure = Structure()
         elif len(model)==4:
             # PDB needs to be retrieved
+            if debug:
+                print debug_head+"adding descriptors to {}".format(model)
             structure = Structure(url=model,artifacts=a)           
         else:
             # Model is local file
+            if debug:
+                print debug_head+"adding descriptors to {}".format(model)
             pdbfile = model
             structure = Structure(filename=pdbfile,artifacts=a)                                   
+        if debug:
+            structure.flag_debug()
         if 'dssp' in descriptors:
-            structure.add_dssp()
+            structure.add_dssp(chains_of_interest)
         if 'ligand' in descriptors:
             pass
         if 'peptide' in descriptors:
@@ -402,6 +481,8 @@ def add_descriptors(df,descriptors):
         if allstructs is None:
             allstructs = current_df
         else:
-            allstructs = pd.concat([current_df,allstructs])                                                                 
+            allstructs = pd.concat([current_df,allstructs])
+        if debug:
+            print "Current allstructs df has {} rows".format(len(allstructs.index))                                                                             
     return pd.merge(df,allstructs,how='left',
                     on=['structure','chain','structure_position','icode'])
