@@ -93,7 +93,7 @@ class Alignment(object):
         '''
         currentseq = self.left_sequence if side=="left" else self.right_sequence
         if self.debug:
-            print self.debug_head+"Adding seq {} to {} to with to account for gaps".format(name,side)
+            print self.debug_head+"Adding seq {} to {} accounting for gaps".format(name,side)
         naa = currentseq['nAA']
 
         if naa!=len(sequence):
@@ -126,7 +126,7 @@ class Alignment(object):
                     da += 1
                     newseq.append(" ")                    
         if self.debug:
-            print self.debug_head+"Added {} positions".format(da)
+            print self.debug_head+"Added {} gap positions".format(da)
         currentseq[name] = newseq
         self.current = False
         return None

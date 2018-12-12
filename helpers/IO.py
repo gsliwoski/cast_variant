@@ -27,6 +27,7 @@ PDB_PATH = "/dors/capra_lab/data_clean/pdb/2018-04-11/structures/" #All PDB stru
 # PDB files must be in pdbXXXX.ent.gz format and in one directory
 SWISS_PATH = "/dors/capra_lab/data_clean/swissmodel/2018-07-23/SWISS-MODEL_Repository/"
 # SWISSModel hierarchy should be in format as downloaded and required for pickling sequences
+ARTIFACTS_FILE = "./helpers/artifacts.ls"
 
 # Add each descriptor to applications list
 # If descriptor requires no application, then set to None
@@ -37,6 +38,9 @@ DESCRIPTOR_APPLICATIONS = {'dssp': DSSP,
                            'ligand':None,
                            'nucleotide':None,
                            'peptide':None}
+
+# Set of artifacts used if artifact filtering is turned on
+ARTIFACTS = None
                            
 # Ensure that the required datasets are available
 def check_seqs(arguments):
@@ -68,7 +72,7 @@ def check_applications(arguments):
     Check paths for required descriptor files/applications
     name = 'DSSP' or 'PDB' or 'SWISS'
     '''
-    names = [DESCRIPTOR_APPLICATIONS[x] for x in arguments.descriptors]
+    names = [DESCRIPTOR_APPLICATIONS[x] for x in arguments.descriptors if x in DESCRIPTOR_APPLICATIONS]
     # Models need to be present, TODO: Add ability to retrieve models from url
     if not arguments.nomodel:
         names.append(DESCRIPTOR_APPLICATIONS['model'])
@@ -858,10 +862,17 @@ def load_model(modelfile,debug):
     if debug:
         print debug_head+"Loading model {}".format(modelfile)
     structure = parser.get_structure("Model",modelfile)
-    chainID,complex_state = model_information(modelfile)
+    complex_state = model_information(modelfile)
     if debug:
-        print debug_head+"model has chainID: {}, complex_state: {}".format(chainID,complex_state)
-    chain = structure[0][chainID]
+        print debug_head+"model has complex_state: {}".format(complex_state)
+    # I'm assuming that all chains in a model are of the target protein
+    # I can't find any models that are hetero even if they come from a heteroolig template
+    # So, for now I need to stick with this assumption because I can't see any way to determine
+    # which chain is the target protein in any cases of a heterooligomer model
+    # which is why I think that never happens
+    for cc in structure[0]: # For now, only the first chain in the model is taken
+        chain = cc
+        break
     resnum = 0
     fasta = ""
     icodes = ""
@@ -883,7 +894,7 @@ def load_model(modelfile,debug):
         print debug_head+"{} has resnums".format(modelfile, resnums)        
     return {'filename':modelfile,
             'fasta':fasta,
-            'chain':chainID,
+            'chain':chain.get_id(),
             'icodes':icodes,
             'resnums':resnums,
             'complex_state':complex_state}
@@ -892,13 +903,55 @@ def model_information(modelfile):
     '''Gets specific model information.
        Regarding complex status and current chain.
        Relevant for non-monomers'''
-    #Right now, I'm getting the current chain based on the filename
-    #However, I think in REMARK 3 the MMCIF also corresponds to chain
-    chain = re.search("[.][\w][_][\w]+\.pdb$",modelfile).group(0)[1:2]
-    #Get the complex state of the model
+#    chain = re.search("[.][\w][_][\w]+\.pdb$",modelfile).group(0)[1:2]
+    #Get the complex state of the model - assumes model complex state is first
     with open(modelfile) as infile:
         complex_state = 'monomer'
         for line in infile:
             if not line.strip().startswith("REMARK   3  OSTAT"): continue
             complex_state = line.strip().split()[-1]
-    return chain,complex_state             
+            break
+    return complex_state
+
+def load_artifacts():
+    '''
+    Loads the artifacts from the artifact file
+    Puts into dictionary with keys ligand and peptide
+    ligands is a list of 3-character ligand ID
+    peptides is a dict of keys pdbid
+    each pdbid is a list of chain1_chain2
+    '''
+    global ARTIFACTS
+    x = 0
+    ARTIFACTS = {'ligand':[],'peptide':[]}
+    if not path.isfile(ARTIFACTS_FILE):
+        raise ParseWarning("Parse artifacts","{} file not found".format(ARTIFACTS_FILE))
+    with open(ARTIFACTS_FILE) as infile:
+        for line in infile:
+            line = line.strip()
+            if line[0]=="#" or len(line)<3: continue                               
+            line = line.split("#")[0]
+            if len(line)==3:
+                ARTIFACTS['ligand'].append(line)
+            elif len(line.split()==3):
+                x += 1
+                line = line.split()
+                if line[0] in ARTIFACTS['peptide']:
+                    ARTIFACTS['peptide'][line[0]].append("_".join(line[1:]))
+                else:
+                    ARTIFACTS['peptide'][line[0]]=["_".join(line[1:])]
+            else:
+                continue
+    print "Loaded artifacts: {} ligands, and {} protein-protein interfaces".format(len(ARTIFACTS['ligand']),x)
+                                                                                                
+def get_artifacts(pdbid=None):
+    if ARTIFACTS is None:
+        try:
+            load_artifacts()
+        except (ParseWarning,IOError) as e:
+            print "Warning: Failed to open artifacts file {}, unable to filter artifacts".format(ARTIFACTS_FILE)
+            try:
+                print "Error message: {}".format(e.fullmsg)
+            except:
+                print "Error message: {}".format(e)
+    return ARTIFACTS

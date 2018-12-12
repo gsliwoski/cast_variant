@@ -84,7 +84,7 @@ def worker(variant, datasets, arguments):
     multiproc = arguments.num_procs > 1
     if debug:
         ct = time.localtime()
-        print debug_head+"Staring worker at {}:{}:{}".format(ct.tm_hour,ct.tm_min,ct.tm_sec)
+        print debug_head+"Starting worker at {}:{}:{}".format(ct.tm_hour,ct.tm_min,ct.tm_sec)
     if multiproc:
         lock = mp.Lock()
     else:
@@ -95,7 +95,7 @@ def worker(variant, datasets, arguments):
     if debug:
         print debug_head+"Updating header with descriptors start: {}".format(var_df_header)
     for d in arguments.descriptors:
-        var_df_header += HEADERS[d]
+        var_df_header += HEADERS.get(d,[])
     if debug:
         print debug_head+"Final header: {}".format(var_df_header)
     try:

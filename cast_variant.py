@@ -72,7 +72,14 @@ if len(args.descriptors)>0:
         args.descriptors = ['dssp','ligand','nucleotide',
                             'peptide'] #TODO: update as more descriptors implemented
     check_applications(args)
-                
+    # If filter artifacts is set, load the artifacts file
+    if "artifacts" not in args.descriptors:
+        if args.debug:
+            print "DEBUG: cast_variant: loading artifacts"
+        try:
+            load_artifacts()
+        except ParseWarning as e:
+            print e.fullmsg                        
 else:
     if args.debug:
         print "DEBUG: cast_variant: descriptor list defined as empty"
@@ -103,7 +110,6 @@ if args.debug and False: #Probably unnecessary
 # Load the necessary sequence sets
 # After loading each sequence set filter variants that
 # don't have the necessary sequence
-# 
 print "loading necessary datasets"
 if args.debug:
     print "DEBUG: cast_variant: loading transcripts"

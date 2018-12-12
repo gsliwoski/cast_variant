@@ -1,5 +1,5 @@
 from exceptions import *
-from IO import DSSP
+from IO import DSSP,get_artifacts
 from Bio import PDB
 from collections import OrderedDict
 import os
@@ -7,6 +7,8 @@ import uuid
 import pandas as pd
 import urllib2
 from numpy import where as npwhere
+from numpy.linalg import norm as norm
+import sys
 
 INSULIN = "P01308"
 BETA2MG = "P61769"
@@ -14,15 +16,15 @@ PDB_URL_FORMAT = "https://files.rcsb.org/view/{}.pdb" #uppercase 4char
 
 # Headers are the defined columns for each descriptor
 HEADERS = {'dssp': ['SS','SASA_complex','SASA_self'],
-           'ligand': ['closest_ligand_distance','ligands_within_6A'],
-           'nucleotide': ['closest_nucleotide_distance'],
-           'peptide': ['closest_peptide_distance','chains_within_6A']}
+           'ligand': ['closest_ligand_distance','ligands_within_5A'],
+           'NAnucleotide': ['closest_nucleotide_distance'],
+           'NApeptide': ['closest_peptide_distance','chains_within_5A']}
 # Holders are the placeholder values for each of the descriptor columns
 # Typically ? for character descriptors and -999 for numeric
 HOLDERS = {'SS':'?','SASA_complex':-999,'SASA_self':-999,
-           'closest_ligand_distance':-999,'ligands_within_6A':'?',
+           'closest_ligand_distance':-999,'ligands_within_5A':'?',
            'closest_nucleotide_distance':-999,
-           'closest_peptide_distance':-999,'chains_within_6A':'?'}
+           'closest_peptide_distance':-999,'chains_within_5A':'?'}
 
 class DictQue(OrderedDict):
     '''
@@ -163,7 +165,7 @@ class Structure(object):
         self.ligand = None
         self.nucleotide = None
         self.peptide = None       
-        self.artifacts = artifacts
+        self.artifacts = {'ligand':[],'peptide':[]} if not artifacts else get_artifacts()
         self.dssp_path = DSSP
         self.id = "Holder"
         self.res_header = ['chain','structure_position','icode']
@@ -202,7 +204,7 @@ class Structure(object):
         self.debug = True
         self.debug_head = "DEBUG: descriptors: Structure({}): ".format(self.id)
 
-    def add_dssp(self,selected_chains):
+    def add_dssp(self,selected_chains=list()):
         '''
         Adds DSSP features.
         DSSP ignores hetatoms but treats oligomers as single units
@@ -257,6 +259,8 @@ class Structure(object):
                 isolated = dict()
                 badchains = list()
                 if len(self.struct[0].get_list()) == 1:
+                    if self.debug:
+                        print self.debug_head+"Single chain, no need to run DSSP on isolated chains"
                     isolated[self.struct[0].get_list()[0].get_id()] = oligomer
                 else:
                     if self.debug:
@@ -312,11 +316,13 @@ class Structure(object):
                         sasa = oligomer[res]
                         isosasa = isolated[c][res][3]                                            
                     dssp.append([c,r,i,ss,sasa,isosasa])                                                                              
-            except (OSError,DescriptorException) as e: # Generate a holder set on the fly
+            except (OSError,DescriptorException,PDB.PDBExceptions.PDBException) as e: # Generate a holder set on the fly
                 print "Warning, DSSP calculation failed for {}: {}".format(self.id,e)
                 genempty = True
 #                raise ParseWarning("DSSP Calculation","Failed DSSP for {}({})".format(self.id,e))
 #            except ParseWarning as e:
+                if self.debug:
+                    print self.debug_head+"DSSP failed with exception {}".format(e)
             if len(dssp)==0: # Generate a holder set on the fly if it's still empty
                 genempty = True
                 if self.debug:
@@ -340,6 +346,113 @@ class Structure(object):
         self.header += HEADERS['dssp']                                                   
         if self.debug:
             print self.debug_head+"Finished DSSP, current header: {}".format(self.header)
+    
+    def add_ligand(self,selected_residues=list()):
+        '''
+        Attach the ligand-based descriptors including
+        distance to closest ligand and list of ligands within
+        4 angstroms
+        Can take an option list of selected residues chain_resnum_icode
+        to avoid unnecessary computations
+        '''
+        if self.debug:
+            print self.debug_head+"Adding ligand-based descriptor"
+            print self.debug_head+"There are {} selected residues".format(len(selected_residues))
+        ligdict = {x:list() for x in self.res_header+HEADERS['ligand']}
+        if self.id == "Holder":
+            c = HOLDERS.keys()
+            h = ['?','?','?']+[HOLDERS[x] for x in c]
+            c = self.res_header+c
+            self.ligand = pd.DataFrame([h],columns=c)[self.res_header+HEADERS['ligand']]
+            if self.debug:
+                print self.debug_head+"added holder: {}".format(h)
+        else:
+            if len(selected_residues)==0:
+                sel = False
+            else:            
+                sel = True
+            resdict = split_residue_codes(selected_residues)       
+            # Get the list of ligands
+            ligands = list()
+            for c in self.struct[0]:
+                for r in c:
+                    resid = r.get_id()
+                    if resid[0][0]=="H":
+                        ligid = resid[0].split("_")[1].strip()
+                        if ligid=="HOH": continue #Always skip water
+                        if ligid in self.artifacts['ligand']: 
+                            if self.debug:
+                                print self.debug_head+"Skipping artifact ligand {}".format(ligid)
+                            continue
+                        ligands.append(r)
+            if self.debug:
+                print self.debug_head+"Found {} relevant ligands in structure".format(len(ligands))
+    
+            # If there are no relevant ligands in the structure, generate a holder set
+            if len(ligands)==0:
+                if self.debug:
+                    print self.debug_head+"No ligands in structure, using holders"
+                useholder = True
+            else:
+                useholder = False                            
+            for c in self.struct[0]:
+                if c.get_id() not in resdict and sel: continue
+                for r in c:
+                    if r.get_id()[0]!=" ": continue
+                    rcode = "_".join(str(i) for i in r.get_id()[1:])
+                    if rcode not in resdict[c.get_id()] and sel: continue
+                    if useholder:
+                        ligdict['chain'].append(c.get_id())
+                        ligdict['structure_position'].append(r.get_id()[1])
+                        ligdict['icode'].append(r.get_id()[2])
+                        for h in HEADERS['ligand']:
+                            ligdict[h].append(HOLDERS[h])
+                    else:
+                        if self.debug:
+                            print self.debug_head+"Getting ligand distances for {}_{}".format(c.get_id(),rcode)
+                        closest = None
+                        within = set()
+                        for lig in ligands:
+                            ligcode = lig.get_id()
+                            ligname = ligcode[0].split("_")[1].strip()
+                            # I really hope ligands never have icodes
+                            ligcode = "_".join([ligname,c.get_id(),str(ligcode[1])])
+                            for a1 in r:
+                                for a2 in lig:                           
+                                    distance = norm(a1-a2)
+                                    if closest is None or distance<closest:
+                                        if self.debug:
+                                            print self.debug_head+"{} is now closest with dist {}".format(ligcode,distance)
+                                        closest = distance
+                                    if distance<=5.0:
+                                        within.add(ligcode)                                                                                                               
+                        ligdict['chain'].append(c.get_id())
+                        ligdict['structure_position'].append(r.get_id()[1])
+                        ligdict['icode'].append(r.get_id()[2])
+                        if closest is None:
+                            if self.debug:
+                                print self.debug_head+"no closest ligand was found, using holder"
+                            closest = HOLDERS['ligand']["closest_ligand_distance"]
+                        else:
+                            closest = round(closest,2)
+                        ligdict['closest_ligand_distance'].append(closest)
+                        if len(within)==0:
+                            within.add("None")
+                        if self.debug:
+                            print self.debug_head+"Ligands within cutoff: {}".format(within)
+                        ligdict['ligands_within_5A'].append(",".join(within))
+                self.ligand = pd.DataFrame.from_dict(ligdict)
+                if self.debug:
+                    print "Finished ligand datatable has {} rows".format(len(self.ligand.index))
+        if self.descriptors is None:
+            self.descriptors = self.ligand
+        else:
+            self.descriptors = self.descriptors.merge(self.ligand,
+                                                      on=self.res_header,
+                                                      how='outer')
+        self.header += HEADERS['ligand']                                                   
+        if self.debug:
+            print self.debug_head+"Finished ligand, current header: {}".format(self.header)
             
     def attach_descriptors(self, partner):
         '''
@@ -384,6 +497,7 @@ class Structure(object):
                 if x in self.res_header: continue
                 newdf[x] = npwhere(newdf[x].isnull(),HOLDERS[x],newdf[x])
             return newdf
+
     def get_dssp(self,chain,resnum,icode=" "):
         '''
         Get the DSSP for a particular residue
@@ -466,7 +580,7 @@ def add_descriptors(df,descriptors,debug):
         if 'dssp' in descriptors:
             structure.add_dssp(chains_of_interest)
         if 'ligand' in descriptors:
-            pass
+            structure.add_ligand(residues_of_interest)
         if 'peptide' in descriptors:
             pass
         if 'nucleotide' in descriptors:
@@ -486,3 +600,14 @@ def add_descriptors(df,descriptors,debug):
             print "Current allstructs df has {} rows".format(len(allstructs.index))                                                                             
     return pd.merge(df,allstructs,how='left',
                     on=['structure','chain','structure_position','icode'])
+
+def split_residue_codes(rescodes):
+    resdict = dict()
+    for r in rescodes:
+        c,rn,i = r.split("_")
+        ri = "{}_{}".format(rn,i)
+        if c in resdict:
+            resdict[c].append(ri)
+        else:
+            resdict[c] = [ri]
+    return resdict                                 
