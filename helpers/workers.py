@@ -157,8 +157,8 @@ def worker(variant, datasets, arguments):
                 current_unp['structure_aa'] = "-"
                 current_unp['structure_position'] = current_unp['uniprot_position']
                 current_unp['icode'] = " "
-                current_unp['template_identity'] = 1.0
-                current_unp['structure_identity'] = 1.0
+                current_unp['template_identity'] = 100.0
+                current_unp['structure_identity'] = 100.0
                 current_unp['structure_isoform'] = isoform
                 current_unp['complex_state'] = "Uniprot"
                 unp_df_out = pd.DataFrame.from_dict(current_unp).round({'transcript_identity':1})
@@ -237,7 +237,7 @@ def worker(variant, datasets, arguments):
 
     # Move on to swissmodels
     try:
-        if not arguments.nomodel:
+        if not arguments.nomodel: #TODO: Fix the float structure_residue numbering
             # Generate the model table
             modelids = gather_models(uniprot,isoform,datasets['models'],debug)
             if debug:
@@ -276,7 +276,7 @@ def worker(variant, datasets, arguments):
                     print debug_head+"generating model df for {} [{} secs elapsed]".format(uniprot,ce)
                 current_mod = current_aln.dict
                 current_mod.pop('transcript_aa')
-                current_mod['structure_identity'] = current_aln.identity("left")
+                current_mod['structure_identity'] = current_aln.identity("left")*100
                 current_mod['structure'] = current_model['filename']
                 current_mod['chain'] = current_model['chain']
                 current_mod['complex_state'] = current_model['complex_state']
@@ -462,7 +462,7 @@ def gather_sifts(uniprot,isoform,sifts):
         # TODO: improve?
         # Store residues as dataframe and filter for relevant chain
         residues['structure_isoform'] = 'PDB'
-        residues['template_identity'] = 1.0
+        residues['template_identity'] = 100.0
         residues['complex_state'] = 'PDB'
         resdf = pd.DataFrame.from_dict(residues)
         # Filter for only the relevant chain

@@ -17,14 +17,18 @@ PDB_URL_FORMAT = "https://files.rcsb.org/view/{}.pdb" #uppercase 4char
 # Headers are the defined columns for each descriptor
 HEADERS = {'dssp': ['SS','SASA_complex','SASA_self'],
            'ligand': ['closest_ligand_distance','ligands_within_5A'],
-           'NAnucleotide': ['closest_nucleotide_distance'],
+           'nucleotide': ['closest_nucleotide_distance','closest_nucleotide_type'],
            'NApeptide': ['closest_peptide_distance','chains_within_5A']}
 # Holders are the placeholder values for each of the descriptor columns
 # Typically ? for character descriptors and -999 for numeric
 HOLDERS = {'SS':'?','SASA_complex':-999,'SASA_self':-999,
            'closest_ligand_distance':-999,'ligands_within_5A':'?',
-           'closest_nucleotide_distance':-999,
+           'closest_nucleotide_distance':-999,'closest_nucleotide_type':'?',
            'closest_peptide_distance':-999,'chains_within_5A':'?'}
+
+# Current set of residues considered DNA or RNA
+RNA = ["U","C","A","G"]
+DNA = ["DT","DC","DA","DG"]
 
 class DictQue(OrderedDict):
     '''
@@ -347,7 +351,7 @@ class Structure(object):
         if self.debug:
             print self.debug_head+"Finished DSSP, current header: {}".format(self.header)
     
-    def add_ligand(self,selected_residues=list()):
+    def add_ligand(self,selected_residues=list()): #TODO: Need to add skipping NCAA's since MSE is for now an artifact since it's modified MET.
         '''
         Attach the ligand-based descriptors including
         distance to closest ligand and list of ligands within
@@ -453,7 +457,87 @@ class Structure(object):
         self.header += HEADERS['ligand']                                                   
         if self.debug:
             print self.debug_head+"Finished ligand, current header: {}".format(self.header)
-            
+    
+    def add_nucleotide(self, selected_residues = list()):
+        '''
+        Calculate distance to closest DNA or RNA and indicate whether it's DNA or RNA
+        '''
+        if self.debug:
+            print self.debug_head+"Adding nucleotide-based descriptor"
+            print self.debug_head+"There are {} selected residues".format(len(selected_residues))
+        nucdict = {x:list() for x in self.res_header+HEADERS['nucleotide']}
+        # Return holders if it's a Holder structure
+        if self.id == "Holder":
+            c = HOLDERS.keys()
+            h = ['?','?','?']+[HOLDERS[x] for x in c]
+            c = self.res_header+c
+            self.nucleotide = pd.DataFrame([h],columns=c)[self.res_header+HEADERS['nucleotide']]
+            if self.debug:
+                print self.debug_head+"added holder: {}".format(h)
+        else:
+            if len(selected_residues)==0:
+                sel = False
+            else:            
+                sel = True        
+            # First get any DNA/RNA residues in the structure
+            nucleotides = list()
+            for c in self.struct[0]:
+                nucleotides += [x for x in c.get_list() if x.get_resname().strip() in RNA+DNA]
+             
+            if len(nucleotides)==0:
+                if self.debug:
+                    print self.debug_head+"No nucleotide residues found, returning holder"
+                useholder = True
+            else:
+                if self.debug:
+                    print self.debug_head+"{} nucleotide residues found".format(len(nucleotides))
+                useholder = False
+            resdict = split_residue_codes(selected_residues)                                                                                               
+            for c in self.struct[0]:           
+                if c.get_id() not in resdict and sel: continue                
+                for r in c:
+                    if r.get_id()[0]!=" ": continue
+                    rcode = "_".join(str(i) for i in r.get_id()[1:])
+                    if rcode not in resdict[c.get_id()] and sel: continue
+                    if useholder:
+                        nucdict['chain'].append(c.get_id())
+                        nucdict['structure_position'].append(r.get_id()[1])
+                        nucdict['icode'].append(r.get_id()[2])
+                        for h in HEADERS['nucleotide']:
+                            nucdict[h].append(HOLDERS[h])
+                    else:
+                        if self.debug:
+                            print self.debug_head+"Getting nucleotide atom distances for {}_{}".format(c.get_id(),rcode)
+                        closest = list()
+                        for nuc in nucleotides:
+                            nuctype = "DNA" if nuc.get_resname().strip() in DNA else "RNA"
+                            for a1 in r:
+                                for a2 in nuc:                           
+                                    distance = norm(a1-a2)
+                                    if len(closest)==0 or distance<closest[0]:
+                                        if self.debug:
+                                            print self.debug_head+"{}({}) is now closest with dist {}".format(nuc.get_id(),nuctype,distance)
+                                        closest = [distance,nuctype]
+                        nucdict['chain'].append(c.get_id())
+                        nucdict['structure_position'].append(r.get_id()[1])
+                        nucdict['icode'].append(r.get_id()[2])
+                        nucdict['closest_nucleotide_distance'].append(round(closest[0],2))
+                        nucdict['closest_nucleotide_type'].append(nuctype)
+                self.nucleotide = pd.DataFrame.from_dict(nucdict)
+                if self.debug:
+                    print "Finished nucleotide datatable has {} rows".format(len(self.nucleotide.index))
+        if self.descriptors is None:
+            self.descriptors = self.nucleotide
+        else:
+            self.descriptors = self.descriptors.merge(self.nucleotide,
+                                                      on=self.res_header,
+                                                      how='outer')
+        self.header += HEADERS['nucleotide']                                                   
+        if self.debug:
+            print self.debug_head+"Finished nucleotide, current header: {}".format(self.header)
+                            
+                        
+                    
     def attach_descriptors(self, partner):
         '''
         Attach descriptors to partner df
@@ -584,7 +668,7 @@ def add_descriptors(df,descriptors,debug):
         if 'peptide' in descriptors:
             pass
         if 'nucleotide' in descriptors:
-            pass
+            structure.add_nucleotide(residues_of_interest)
         if 'unp' in descriptors:
             pass           
         current_df = structure.attach_descriptors(df[df.structure==model][

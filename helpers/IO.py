@@ -305,10 +305,16 @@ def parse_varfile(varfile,args):
         # All others are written to the skipped file
         line = line.strip().split("#")[0]
         if line=="": continue
-        line = line.strip().split("\t")
+        # Since splitting by tab, in cases where their editor inserts spaces for tabs,
+        # replace any whitespace of 3 or more with tab so it can be parsed.
+        whitepattern = re.compile("[ ]{3,}")
+        line = whitepattern.sub("\t",line.strip()).split("\t")
         if len(line)==0: continue
         try:
             if len(line)<7:
+                if debug:
+                    print debug_head+"skipping incomplete line with {} columns".format(len(line))
+                    print line
                 raise ParseWarning("variant_file","incomplete line: {}".format(
                                                "\t".join(line)))
             consequence,trans,pos,var,protein,unp,iso = line[:7]

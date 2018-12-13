@@ -80,6 +80,9 @@ if args.structure or args.model and idtype=="unp":
     print "loading model dataset"
     models = load_dataset(SEQ_PATH+SWISSMODEL)
 
+# Sometimes copy/paste from browser puts invisible characters in
+args.identifier = filter(str.isalnum,args.identifier)
+
 # Check for sequence
 fasta = check_sequences(idtype,args.identifier)
 if len(fasta)==0:
