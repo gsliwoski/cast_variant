@@ -10,38 +10,75 @@ import pandas as pd
 from Bio import PDB
 import re
 from numpy import where as npwhere
+from numpy import vectorize
 
-##### INITIALIZATION FUNCTIONS #####
-
-# Define what the dataset files are
-SEQ_PATH = "./sequences/" # Where required datasets are
-SWISS_SEQ = "swissmodel.pickle" # Model mapping
-UNP_SEQ = "unp.pickle" # Uniprot sequences
-UNP_CANONICAL = "uniprot_canonical_isoforms.tab" # Canonical uniprot ACs
-UNP_MAP = "uniprot_sec2prim_ac.txt" # Uniprot secondary to primary AC map
-TRANS_SEQ = "trans.pickle" # Transcript sequences
-SIFTS_SEQ = "sifts.pickle" # uniprot - pdb mapping
-SIFTS_PATH = "/dors/capra_lab/data_clean/sifts/2018-08-08/xml/" # Where sifts alignments are
-DSSP = '/dors/capra_lab/bin/dssp' # DSSP application (required for some descriptors)
-PDB_PATH = "/dors/capra_lab/data_clean/pdb/2018-04-11/structures/" #All PDB structures
-# PDB files must be in pdbXXXX.ent.gz format and in one directory
-SWISS_PATH = "/dors/capra_lab/data_clean/swissmodel/2018-07-23/SWISS-MODEL_Repository/"
-# SWISSModel hierarchy should be in format as downloaded and required for pickling sequences
-ARTIFACTS_FILE = "./helpers/artifacts.ls"
-
+# Dictionary of paths and applications
+CONFIG = {"SEQ_PATH":"./",
+          "SWISS_SEQ":"",
+          "UNP_SEQ":"",
+          "UNP_CANONICAL":"",
+          "UNP_MAP":"",
+          "TRANS_SEQ":"",
+          "SIFTS_SEQ":"",
+          "SIFTS_PATH":"",
+          "DSSP":"",
+          "PDB_PATH":"",
+          "SWISS_PATH":"",
+          "ARTIFACTS_FILE":""}
+          
 # Add each descriptor to applications list
+# Which is set in load_config() below
 # If descriptor requires no application, then set to None
 # Used to check for presence before beginning
-DESCRIPTOR_APPLICATIONS = {'dssp': DSSP,
-                           'pdb': PDB_PATH,
-                           'model': SWISS_PATH,
-                           'ligand':None,
-                           'nucleotide':None,
-                           'peptide':None}
+DESCRIPTOR_APPLICATIONS = dict()
 
 # Set of artifacts used if artifact filtering is turned on
 ARTIFACTS = None
-                           
+
+##### INITIALIZATION FUNCTIONS #####
+
+def load_config(arguments):
+    debughead = "DEBUG: IO: load_config: "
+    global CONFIG
+    global DESCRIPTOR_APPLICATIONS
+    configfile = "config.sys"
+    required = set(["TRANS_SEQ","UNP_SEQ"])
+    # Collect all the required settings to ensure they are found
+    if not arguments.nopdb:
+        required.update(["SIFTS_SEQ","SIFTS_PATH"])
+        if 'ligand' in arguments.descriptors or\
+           'nucleotide' in arguments.descriptors or\
+           'peptide' in arguments.descriptors or\
+           'dssp' in arguments:
+            required.update(["PDB_PATH"])
+    if not arguments.nomodel:
+        required.update(["SWISS_SEQ","SWISS_PATH"])
+    if arguments.vep:
+        required.update(["UNP_CANONICAL","UNP_MAP"])
+    if 'dssp' in arguments.descriptors:
+        required.update(["DSSP"])
+    if "artifacts" not in arguments.descriptors:
+        required.update(["ARTIFACTS_FILE"])                                         
+    with open(configfile) as infile: #TODO: Make as dict
+        for rawline in infile:
+            line = rawline.strip().split("#")[0].split()
+            if len(line)<2: continue
+            curset,curval = line[:2]
+            CONFIG[curset] = curval
+    required = required - set(CONFIG.keys())
+    if len(required)>0:
+        sys.exit("Missing required config line(s) for {} in config file").format(",".join(required))
+    if arguments.debug:
+        for k in CONFIG:
+            print debughead+"{} = {}".format(k,CONFIG[k])
+    DESCRIPTOR_APPLICATIONS = {'dssp': CONFIG['DSSP'],
+                               'pdb': CONFIG['PDB_PATH'],
+                               'model': CONFIG['SWISS_PATH'],
+                               'ligand':None,
+                               'nucleotide':None,
+                               'peptide':None}
+                
+
 # Ensure that the required datasets are available
 def check_seqs(arguments):
     nomodel = arguments.nomodel
@@ -49,23 +86,23 @@ def check_seqs(arguments):
     debug = arguments.debug
     if debug:
         print "DEBUG: I/O: checking for sequence pickles"
-    for x in [SWISS_SEQ,
-              UNP_SEQ,
-              UNP_CANONICAL,
-              UNP_MAP,
-              TRANS_SEQ,
-              SIFTS_SEQ]:
+    for x in ['SWISS_SEQ',
+              'UNP_SEQ',
+              'UNP_CANONICAL',
+              'UNP_MAP',
+              'TRANS_SEQ',
+              'SIFTS_SEQ']:
         if (x=="SWISS_SEQ" and not nomodel) or\
            (x!="SWISS_SEQ" and not nopdb):\
-            assert path.isfile(SEQ_PATH+x),\
+            assert path.isfile(CONFIG['SEQ_PATH']+CONFIG[x]),\
             "{}{} not found, run {}pickle_sequences.py".format(
-                                                        SEQ_PATH,
+                                                        CONFIG['SEQ_PATH'],
                                                         x,
-                                                        SEQ_PATH)
+                                                        CONFIG['SEQ_PATH'])
     if not nopdb:
-        assert path.isdir(SIFTS_PATH), "{} not found. "\
+        assert path.isdir(CONFIG['SIFTS_PATH']), "{} not found. "\
                                    "sifts dataset required for PDB".format(
-                                                                    SIFTS_PATH)
+                                                                    CONFIG['SIFTS_PATH'])
                                                                                
 def check_applications(arguments):
     '''
@@ -641,7 +678,7 @@ def process_vep(vep,debug):
 ##### DATASET LOADING #####
 
 def open_seqfile(filename):
-    filename = SEQ_PATH+filename
+    filename = CONFIG['SEQ_PATH']+filename
     try:
         infile = open(filename)
     except IOError:
@@ -650,21 +687,21 @@ def open_seqfile(filename):
             
 # Load the transcript sequences
 def load_transcripts():
-    infile = open_seqfile(TRANS_SEQ)
+    infile = open_seqfile(CONFIG['TRANS_SEQ'])
     trans = pickle.load(infile)
     print "loaded {} transcript sequences".format(len(trans))
     return trans
     
 # Load the sequences required for PDB casting
 def load_uniprot():
-    infile = open_seqfile(UNP_SEQ)
+    infile = open_seqfile(CONFIG['UNP_SEQ'])
     unp = pickle.load(infile)
     print "loaded {} uniprots".format(len(unp))
     return unp
 
 # Load sifts uniprot-PDB alignments
 def load_sifts():
-    infile = open_seqfile(SIFTS_SEQ)
+    infile = open_seqfile(CONFIG['SIFTS_SEQ'])
     sifts = pickle.load(infile)
     print "loaded {} sifts uniprots".format(len(sifts))
     return sifts
@@ -672,7 +709,7 @@ def load_sifts():
 # Load model mappings
 def load_models(source):
     if source=="swissmodel":
-        infile = open_seqfile(SWISS_SEQ)
+        infile = open_seqfile(CONFIG['SWISS_SEQ'])
         models = pickle.load(infile)
         print "loaded {} swissmodel uniprots".format(len(models))
     else:
@@ -682,16 +719,16 @@ def load_models(source):
 # Load table of canonical uniprot isoforms
 def load_canonical(debug):
     if debug:
-        print "DEBUG: IO: load_canonical {}".format(SEQ_PATH+UNP_CANONICAL)
-    df = pd.read_csv(open(SEQ_PATH+UNP_CANONICAL),sep="\t")
+        print "DEBUG: IO: load_canonical {}".format(CONFIG['SEQ_PATH']+CONFIG['UNP_CANONICAL'])
+    df = pd.read_csv(open(CONFIG['SEQ_PATH']+CONFIG['UNP_CANONICAL']),sep="\t")
     df.drop_duplicates(inplace=True)
     return df
 
 # Load secondary to primary AC mapping
 def load_sec2prime(debug):
     if debug:
-        print "DEBUG: IO: load_sec2prime {}".format(SEQ_PATH+UNP_MAP)
-    with open(SEQ_PATH+UNP_MAP) as infile:
+        print "DEBUG: IO: load_sec2prime {}".format(CONFIG['SEQ_PATH']+CONFIG['UNP_MAP'])
+    with open(CONFIG['SEQ_PATH']+CONFIG['UNP_MAP']) as infile:
         sec2prime = [x.strip().split() for x in infile]    
     return sec2prime
     
@@ -716,7 +753,7 @@ def parse_sifts(pdb):
                 
     total_res = 0
     id_res = 0
-    pdbfile = SIFTS_PATH+structure+".xml.gz"
+    pdbfile = CONFIG['SIFTS_PATH']+structure+".xml.gz"
     try:
         infile = gzip.open(pdbfile)
     except:
@@ -930,9 +967,9 @@ def load_artifacts():
     global ARTIFACTS
     x = 0
     ARTIFACTS = {'ligand':[],'peptide':[]}
-    if not path.isfile(ARTIFACTS_FILE):
-        raise ParseWarning("Parse artifacts","{} file not found".format(ARTIFACTS_FILE))
-    with open(ARTIFACTS_FILE) as infile:
+    if not path.isfile(CONFIG['ARTIFACTS_FILE']):
+        raise ParseWarning("Parse artifacts","{} file not found".format(CONFIG['ARTIFACTS_FILE']))
+    with open(CONFIG['ARTIFACTS_FILE']) as infile:
         for line in infile:
             line = line.strip()
             if line[0]=="#" or len(line)<3: continue                               

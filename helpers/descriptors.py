@@ -1,5 +1,5 @@
 from exceptions import *
-from IO import DSSP,get_artifacts
+from IO import CONFIG,get_artifacts
 from Bio import PDB
 from collections import OrderedDict
 import os
@@ -9,6 +9,7 @@ import urllib2
 from numpy import where as npwhere
 from numpy.linalg import norm as norm
 import sys
+from numpy import vectorize
 
 INSULIN = "P01308"
 BETA2MG = "P61769"
@@ -64,7 +65,7 @@ class PDBList(object):
     '''
     def __init__(self, artifacts=True):
         self.collection = DictQue(maxlen=200)
-        self.dssp = DSSP
+        self.dssp = CONFIG['DSSP']
         self.parser = PDB.PDBParser(PERMISSIVE=1,QUIET=True)
         self.insulin = DictQue(maxlen=1500)
         self.beta2mg = DictQue(maxlen=1500)
@@ -141,6 +142,9 @@ class PDBList(object):
         return "collection: {}, insulin: {}, beta2mg: {}, flushes {}".format(
             len(self.collection), len(self.insulin), len(self.beta2mg), self.flushes)
 
+def distance(a,b):
+    return norm(a-b)
+    
 class Structure(object):
     '''
     Generate a structure object which uses biopython to load
@@ -170,7 +174,7 @@ class Structure(object):
         self.nucleotide = None
         self.peptide = None       
         self.artifacts = {'ligand':[],'peptide':[]} if not artifacts else get_artifacts()
-        self.dssp_path = DSSP
+        self.dssp_path = CONFIG['DSSP']
         self.id = "Holder"
         self.res_header = ['chain','structure_position','icode']
         self.header = list()
@@ -483,12 +487,15 @@ class Structure(object):
             nucleotides = list()
             for c in self.struct[0]:
                 nucleotides += [x for x in c.get_list() if x.get_resname().strip() in RNA+DNA]
-             
             if len(nucleotides)==0:
                 if self.debug:
                     print self.debug_head+"No nucleotide residues found, returning holder"
                 useholder = True
             else:
+                nucleotide_tups = list()            
+                for nuc in nucleotides:
+                    t = "DNA" if nuc.get_resname().strip() in DNA else "RNA"
+                    nucleotide_tups += [(a,t) for a in nuc if a.element!="H"]
                 if self.debug:
                     print self.debug_head+"{} nucleotide residues found".format(len(nucleotides))
                 useholder = False
@@ -509,20 +516,22 @@ class Structure(object):
                         if self.debug:
                             print self.debug_head+"Getting nucleotide atom distances for {}_{}".format(c.get_id(),rcode)
                         closest = list()
-                        for nuc in nucleotides:
-                            nuctype = "DNA" if nuc.get_resname().strip() in DNA else "RNA"
-                            for a1 in r:
-                                for a2 in nuc:                           
-                                    distance = norm(a1-a2)
-                                    if len(closest)==0 or distance<closest[0]:
-                                        if self.debug:
-                                            print self.debug_head+"{}({}) is now closest with dist {}".format(nuc.get_id(),nuctype,distance)
-                                        closest = [distance,nuctype]
+                        vecd = vectorize(distance)                                                                  
+                        atoms = [a for a in r if a.element!="H"]
+                        n = nucleotide_tups * len(atoms)
+                        atoms = atoms * len(nucleotide_tups)
+                        na = [x[0] for x in n]
+                        nt = [x[1] for x in n]
+                        print atoms
+                        print na
+                        cv = vecd(atoms,na)
+                        mi = cv.argmin()
+                        closest = [cv[mi],nt[mi]]
                         nucdict['chain'].append(c.get_id())
                         nucdict['structure_position'].append(r.get_id()[1])
                         nucdict['icode'].append(r.get_id()[2])
                         nucdict['closest_nucleotide_distance'].append(round(closest[0],2))
-                        nucdict['closest_nucleotide_type'].append(nuctype)
+                        nucdict['closest_nucleotide_type'].append(closest[1])
                 self.nucleotide = pd.DataFrame.from_dict(nucdict)
                 if self.debug:
                     print "Finished nucleotide datatable has {} rows".format(len(self.nucleotide.index))
@@ -534,10 +543,14 @@ class Structure(object):
                                                       how='outer')
         self.header += HEADERS['nucleotide']                                                   
         if self.debug:
-            print self.debug_head+"Finished nucleotide, current header: {}".format(self.header)
+            print self.debug_head+"Finished nucleotide, current header: {}".format(self.header)                                                 
+
+    def add_peptide(self, selected_residues=list()):
+        '''
+        Calculate distance to closest chain
+        '''
+        pass
                             
-                        
-                    
     def attach_descriptors(self, partner):
         '''
         Attach descriptors to partner df

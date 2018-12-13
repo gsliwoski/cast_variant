@@ -61,9 +61,7 @@ args = parser.parse_args()
 assert not (args.nomodel and args.nopdb), \
     "You've selected neither PDB nor models, my job is done."
 
-# Check if necessary sequence files are there
-check_seqs(args)
-# Process the descriptors and check if required applications are there
+# Process the descriptors
 if len(args.descriptors)>0:
     if args.debug:
         print "DEBUG: cast_variant: Processing descriptors"
@@ -71,6 +69,15 @@ if len(args.descriptors)>0:
     if 'all' in args.descriptors:
         args.descriptors = ['dssp','ligand','nucleotide',
                             'peptide'] #TODO: update as more descriptors implemented
+
+# Load the required config settings
+load_config(args)
+
+# Check if necessary sequence files are there
+check_seqs(args)
+
+# Check for necessary descriptor applications/files
+if len(args.descriptors)>0:
     check_applications(args)
     # If filter artifacts is set, load the artifacts file
     if "artifacts" not in args.descriptors:
