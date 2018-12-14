@@ -1,10 +1,6 @@
 # cast_variant
 Cast variant onto protein structure (PDB or model)
 
-Version 1:
-
-Takes list of variants that have already been processed with effect predictor (hopefully VEP38)
-
 Aligns with SWISSMODEL models and PDBs via uniprot-sifts alignments
 
 Returns complete alignments and variant conversions
@@ -14,6 +10,10 @@ Right now, skips any NMD, start changes, stop loss, and multi-AA missense change
 ## Usage
 
 ### Required input
+
+Input style 1: List of pre-formatted variants with all necessary columns:
+
+Takes list of variants that have already been processed with effect predictor (hopefully VEP38)
 
 Tab delimited with one variant per line (no header)
 
@@ -49,6 +49,36 @@ Consequence ENST#   Position    Amino\_acids(R/A)    ENSP#   Uniprot Uniprot-iso
 
 >inframe_deletion        ENST00000358465 720     S/-     ENSP00000351250 Q9UPN9  Q9UPN9-1        36
 
+Input style 2: Raw VEP output
+
+Must use flag -v or --vep to indicate it's vep input.
+
+First, a single representation is selected for each unique variant based on priorities below.
+
+Selected variants are written to input_filename.vep_selected for use directly on any following runs.
+
+Then, selected variants are processed as a normal set of variants.
+
+**Priority selection**
+
+Selection relies on uniprot canonical transcript identification and therefore uniprot mapping files must be premade.
+
+Uniprots are first assigned based on transcript library and, in cases where no uniprot can be assigned, vep assignments are used
+
+Anything without an assigned uniprot is filtered.
+
+Canonical sequences are always defined as the sequence presented on the webpage for the uniprot entry.
+
+Each unique variant is represented by the first occurence in the following list of priorities:
+
+(Any cases that return multiple identical effects on different transcripts, select highest transcript #)
+
+1. Canonical ENST as defined by uniprot canonical library
+2. Canonical NM as defined by uniprot canonical library
+3. ENST with unassigned canonical (in many cases where there is only one isoform, uniprot will not assign an isoform number to canonical sequence and so these represent the only sequence for this uniprot)
+4. NM with unassigned canonical
+5. XM transcript that has an assigned uniprot
+
 **Result:**
 
 * All missense will be cast
@@ -66,6 +96,8 @@ Consequence ENST#   Position    Amino\_acids(R/A)    ENSP#   Uniprot Uniprot-iso
 6. refseq_mammalian.fasta.gz = fasta of all refseq sequences
 
 Note: See /sequences/downloading_datasets.txt for more information
+
+**config.sys** = contains all paths for necessary sequences and applications. Applications not required given command line options will not be checked but sequence pickles are required for all runs. Each setting is space separated ID and value
 
 **Run:**
 ```
@@ -98,11 +130,43 @@ Note: in-frame deletions have alternate amino acid '-' for deleted residues; fra
 
 **--noalign, -a** = suppress creation of full alignment file. By default, writes all full alignments to separate .alignments file. Set if only care about variants.
 
+**--vep, -v** = indicates input file is raw VEP output and should be pre-processed into usable variants.
+
+**--descriptors, -d []** = attach desired descriptors to each variant, see Descriptors section below
+
+**--debug, -x** = Very verbose output for debugging
+
+### Descriptors
+
+Descriptors are provided as a comma-separated list.
+
+Any unrecognized descriptors are ignored
+
+Using 'all' will attach all possible descriptors
+
+By default, for complex-based descriptors including protein-protein interfaces and protein-ligand interfaces, known or suspected artifacts are filtered. These are defined in the ARTIFACTS_FILE and can be changed as desired.
+
+Alternatively, including 'artifacts' in the descriptor list will not filter for any artifacts
+
+**Available descriptors**
+
+Note: All structure-based descriptors are drawn from the first model in a structure
+
+Note: descriptor columns are attached to the .variant output file only (not the .alignment)
+
+**dssp** = Runs DSSP on the whole structure, and then on the variant's isolated chain. returns SS (secondary structure), SASA_complex (relative solvent accessibility in entire structure), SASA_self (relative solvent accessibility for the isolated chain)
+
+**nucleotide** = returns closest_nucleotide_distance (minimum atom-pair distance from variant residue to any RNA or DNA residues in the structure), closest_nucleotide_type (either DNA or RNA or None)
+
+**ligand** = May be subject to artifact filtering. Returns closest_ligand_distance (minimum atom-pair distance from variant residue distance to any ligands in structure), ligands_within_5A (comma separated list of all ligands as ID_chain_resnum of all ligands in structure with atom-pair distance less than 5 with variant residue).
+
+**peptide** = May be subject to artifact filtering. Returns closest_chain_distance (minimum atom-pair distance from variant residue to any other chains in structure), chains_within_5A (comma separated list of chains with minimum atom-pair distance from variant residue less than 5)
+
 ### Results
 
 Assuming noalign and completed is not set, will create 2 files and potentially 3 more depending on variant list.
 
-Inputfilename.variants = all variant positions aligned with uniprot, PDBs, and models
+Inputfilename.variants = all variant positions aligned with uniprot, PDBs, and models along with any selected descriptors
 
 Inputfilename.alignments = full alignments for transcript and all partners
 
@@ -113,5 +177,4 @@ Inputfilename.skipped = any variants that were not cast and, if possible, a shor
 Inputfilename.failures = any variants that failed during casting with a reason why when possible otherwise a traceback for general exceptions
 
 Inputfilename.completed = list of completed transcripts
-
 
