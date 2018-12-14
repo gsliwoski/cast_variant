@@ -19,13 +19,13 @@ PDB_URL_FORMAT = "https://files.rcsb.org/view/{}.pdb" #uppercase 4char
 HEADERS = {'dssp': ['SS','SASA_complex','SASA_self'],
            'ligand': ['closest_ligand_distance','ligands_within_5A'],
            'nucleotide': ['closest_nucleotide_distance','closest_nucleotide_type'],
-           'NApeptide': ['closest_peptide_distance','chains_within_5A']}
+           'peptide': ['closest_chain_distance','chains_within_5A']}
 # Holders are the placeholder values for each of the descriptor columns
 # Typically ? for character descriptors and -999 for numeric
 HOLDERS = {'SS':'?','SASA_complex':-999,'SASA_self':-999,
            'closest_ligand_distance':-999,'ligands_within_5A':'?',
            'closest_nucleotide_distance':-999,'closest_nucleotide_type':'?',
-           'closest_peptide_distance':-999,'chains_within_5A':'?'}
+           'closest_chain_distance':-999,'chains_within_5A':'?'}
 
 # Current set of residues considered DNA or RNA
 RNA = ["U","C","A","G"]
@@ -522,8 +522,6 @@ class Structure(object):
                         atoms = atoms * len(nucleotide_tups)
                         na = [x[0] for x in n]
                         nt = [x[1] for x in n]
-                        print atoms
-                        print na
                         cv = vecd(atoms,na)
                         mi = cv.argmin()
                         closest = [cv[mi],nt[mi]]
@@ -549,7 +547,102 @@ class Structure(object):
         '''
         Calculate distance to closest chain
         '''
-        pass
+        if self.debug:
+            print self.debug_head+"Adding peptide-based descriptor"
+            print self.debug_head+"There are {} selected residues".format(len(selected_residues))       
+        pepdict = {x:list() for x in self.res_header+HEADERS['peptide']}
+        # Use holders if it's a Holder structure
+        if self.id == "Holder":
+            c = HOLDERS.keys()
+            h = ['?','?','?']+[HOLDERS[x] for x in c]
+            c = self.res_header+c
+            self.peptide = pd.DataFrame([h],columns=c)[self.res_header+HEADERS['peptide']]
+            if self.debug:
+                print self.debug_head+"added holder: {}".format(h)
+        else:
+            if len(selected_residues)==0:
+                sel = False
+            else:            
+                sel = True        
+            # Get all the residue atoms that will be used for neighbor arrays
+            residue_atoms = dict()
+            for c in self.struct[0]:
+                ca = [a for r in c for a in r if r.get_id()[0]==' ' and a.element!='H']
+                if len(ca)>0:
+                    residue_atoms[c.get_id()] = ca
+                    
+            # Check if it's only 1 chain and if so use holders
+            # Need to check after gathering atoms to avoid ligand chains, etc.
+            if len(residue_atoms.keys())<2:
+                if self.debug:
+                    print self.debug_head+"Only one chain with residues found, returning holder"
+                useholder = True
+            else:
+                if self.debug:
+                    print self.debug_head+"{} neighbor chains found".format(len(residue_atoms.keys()))
+                useholder = False
+            resdict = split_residue_codes(selected_residues)                                                                                               
+            for c in self.struct[0]:           
+                if c.get_id() not in resdict and sel: continue                
+                for r in c:
+                    if r.get_id()[0]!=" ": continue
+                    rcode = "_".join(str(i) for i in r.get_id()[1:])
+                    if rcode not in resdict[c.get_id()] and sel: continue
+                    if useholder:
+                        pepdict['chain'].append(c.get_id())
+                        pepdict['structure_position'].append(r.get_id()[1])
+                        pepdict['icode'].append(r.get_id()[2])
+                        for h in HEADERS['peptide']:
+                            pepdict[h].append(HOLDERS[h])
+                    else:
+                        if self.debug:
+                            print self.debug_head+"Getting peptide distances for {}_{}".format(c.get_id(),rcode)
+                        vecd = vectorize(distance)                                                                  
+                        atoms = [a for a in r if a.element!="H"]
+                        # Generate a list that contains all atoms for each chain
+                        # duplicated for all atoms in current res
+                        # could probably just use broadcasting
+                        current_neighbors = list()
+                        for nc in residue_atoms:
+                            if nc == c.get_id(): continue
+                            current_neighbors += residue_atoms[nc]
+                        if self.debug:
+                            print self.debug_head+"Getting distances for {} atoms".format(len(current_neighbors))
+                        cna = current_neighbors * len(atoms)
+                        curatoms = atoms * len(current_neighbors)
+                        cv = vecd(curatoms,cna)
+                        mindist = cv.min()
+                        if self.debug:
+                            print self.debug_head+"Min dist = {}".format(mindist)                        
+                        if mindist < 5:
+                            # Put the chains in a temporary dataframe to collect those with min distance less than 5
+                            tmpp = pd.DataFrame.from_dict({'c':[cl.get_parent().get_parent().get_id() for cl in cna],
+                                                           'd':cv})
+                            if self.debug:
+                                tmpp['id'] = cna
+                            cutoffchains = set(tmpp[tmpp.d<5].c)
+                            if self.debug:
+                                cutoffatoms = set(tmpp[tmpp.d<5].id)
+                                print self.debug_head+"Residues within 5A: {}".format([dx.get_parent().get_full_id() for dx in cutoffatoms])
+                        else:
+                            cutoffchains = set(['None'])                            
+                        pepdict['chain'].append(c.get_id())
+                        pepdict['structure_position'].append(r.get_id()[1])
+                        pepdict['icode'].append(r.get_id()[2])
+                        pepdict['closest_chain_distance'].append(round(mindist,2))
+                        pepdict['chains_within_5A'].append(",".join(cutoffchains))
+                self.peptide = pd.DataFrame.from_dict(pepdict)
+                if self.debug:
+                    print self.debug_head+"Finished peptide datatable has {} rows".format(len(self.peptide.index))
+        if self.descriptors is None:
+            self.descriptors = self.peptide
+        else:
+            self.descriptors = self.descriptors.merge(self.peptide,
+                                                      on=self.res_header,
+                                                      how='outer')
+        self.header += HEADERS['peptide']                                                   
+        if self.debug:
+            print self.debug_head+"Finished peptide, current header: {}".format(self.header)                       
                             
     def attach_descriptors(self, partner):
         '''
@@ -679,7 +772,7 @@ def add_descriptors(df,descriptors,debug):
         if 'ligand' in descriptors:
             structure.add_ligand(residues_of_interest)
         if 'peptide' in descriptors:
-            pass
+            structure.add_peptide(residues_of_interest)
         if 'nucleotide' in descriptors:
             structure.add_nucleotide(residues_of_interest)
         if 'unp' in descriptors:
