@@ -68,7 +68,7 @@ if len(args.descriptors)>0:
     args.descriptors = args.descriptors.lower().split(",")
     if 'all' in args.descriptors:
         args.descriptors = ['dssp','ligand','nucleotide',
-                            'peptide'] #TODO: update as more descriptors implemented
+                            'peptide','unp'] #TODO: update as more descriptors implemented
 
 # Load the required config settings
 load_config(args)

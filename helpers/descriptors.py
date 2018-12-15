@@ -19,18 +19,34 @@ PDB_URL_FORMAT = "https://files.rcsb.org/view/{}.pdb" #uppercase 4char
 HEADERS = {'dssp': ['SS','SASA_complex','SASA_self'],
            'ligand': ['closest_ligand_distance','ligands_within_5A'],
            'nucleotide': ['closest_nucleotide_distance','closest_nucleotide_type'],
-           'peptide': ['closest_chain_distance','chains_within_5A']}
+           'peptide': ['closest_chain_distance','chains_within_5A'],
+           'unp': ['cleaved','sorting','membrane','binding region',
+                   'motif','binding site','ptm','covalent']}
+           
 # Holders are the placeholder values for each of the descriptor columns
 # Typically ? for character descriptors and -999 for numeric
 HOLDERS = {'SS':'?','SASA_complex':-999,'SASA_self':-999,
            'closest_ligand_distance':-999,'ligands_within_5A':'?',
            'closest_nucleotide_distance':-999,'closest_nucleotide_type':'?',
-           'closest_chain_distance':-999,'chains_within_5A':'?'}
+           'closest_chain_distance':-999,'chains_within_5A':'?',
+           'cleaved':False,'sorting':False,'membrane':False,'binding region':False,
+           'motif':False,'binding site':False,'ptm':False,'covalent':False}
 
 # Current set of residues considered DNA or RNA
 RNA = ["U","C","A","G"]
 DNA = ["DT","DC","DA","DG"]
 
+# Preprocessed dataframe containing all uniprot category features
+UNP_DF = None
+
+def load_uniprot_df():
+    print "Loading preprocessed uniprot features"
+    df = pd.read_pickle(CONFIG['SEQ_PATH']+CONFIG['UNP_FEATURES'])
+    print "Loaded {} total residues with uniprot features".format(len(df.index))
+    # Previously, I had bad column so if it's there, fix it
+    df.rename({'residue_number':'uniprot_position'},axis="columns",inplace=True)
+    return df
+    
 class DictQue(OrderedDict):
     '''
     A dict version of deque that allows
@@ -643,7 +659,7 @@ class Structure(object):
         self.header += HEADERS['peptide']                                                   
         if self.debug:
             print self.debug_head+"Finished peptide, current header: {}".format(self.header)                       
-                            
+                     
     def attach_descriptors(self, partner):
         '''
         Attach descriptors to partner df
@@ -715,12 +731,12 @@ class Structure(object):
             self.id, self.filename, self.dssp is not None, self.ligand is not None,
             self.nucleotide is not None, self.peptide is not None)
 
-def add_descriptors(df,descriptors,debug):
+def add_structure_descriptors(df,descriptors,debug):
     '''
     Add artifacts to dataframe
     Takes dataframe and a list of descriptors
     '''
-    debug_head = "DEBUG: descriptors: add_descriptors: "
+    debug_head = "DEBUG: descriptors: add_structure_descriptors: "
     if debug:
         print debug_head+"adding descriptors to df with {} rows".format(len(df.index))
     try:
@@ -730,7 +746,7 @@ def add_descriptors(df,descriptors,debug):
        assert 'chain' in list(df.columns.values)
     except AssertionError:
        raise DescriptorException("initialization",
-                                 "dataframe passed to add_descriptors missing required column(s)")
+                                 "dataframe passed to add_structure_descriptors missing required column(s)")
     if 'artifacts' in descriptors:
         a = False
     else:
@@ -775,8 +791,6 @@ def add_descriptors(df,descriptors,debug):
             structure.add_peptide(residues_of_interest)
         if 'nucleotide' in descriptors:
             structure.add_nucleotide(residues_of_interest)
-        if 'unp' in descriptors:
-            pass           
         current_df = structure.attach_descriptors(df[df.structure==model][
                                                      ['structure',
                                                      'chain',
@@ -800,4 +814,35 @@ def split_residue_codes(rescodes):
             resdict[c].append(ri)
         else:
             resdict[c] = [ri]
-    return resdict                                 
+    return resdict
+
+## Non-structure based descriptors
+def add_uniprot_descriptors(df, debug):
+    '''
+    Adds uniprot category flags from preprocessed uniprot feature set
+    Can handle holder since it just relies on residue having a uniprot position
+    '''
+    current_unp = df.iloc[0].uniprot
+    global UNP_DF
+    if UNP_DF is None:
+        UNP_DF = load_uniprot_df() #TODO: move this to do at the beginning in main
+            
+    debug_head = "DEBUG: descriptors: add_uniprot_descriptors: "
+    if debug:
+        print debug_head+"Adding uniprot category descriptors"
+    unpdf = UNP_DF[UNP_DF.uniprot==current_unp]
+    if unpdf.empty: # Probably don't need to do this as nulls are filled in at the end
+        #No features assigned to this uniprot, need to use holders
+        if debug:
+            print debug_head+"No uniprot features found for uniprot {}, using holders".format(current_unp)
+        holderdict = {'uniprot_position': list(df.uniprot_position.unique())}
+        totalres = len(holderdict['uniprot_position'])
+        for h in HEADERS['unp']:
+            holderdict[h] = [HOLDERS[h]]*totalres
+        unpdf = pd.DataFrame.from_dict(holderdict)
+    elif debug:
+        print debug_head+"Uniprot features found for {} residues in {}".format(len(unpdf.index),current_unp)
+    ndf = pd.merge(df,unpdf,how="left",on='uniprot_position')
+    for h in HEADERS['unp']:
+        ndf[h] = npwhere(ndf[h].isnull(),HOLDERS[h],ndf[h])
+    return ndf        

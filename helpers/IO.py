@@ -57,6 +57,8 @@ def load_config(arguments):
         required.update(["UNP_CANONICAL","UNP_MAP"])
     if 'dssp' in arguments.descriptors:
         required.update(["DSSP"])
+    if 'unp' in arguments.descriptors:
+        required.update(["UNP_FEATURES"])
     if "artifacts" not in arguments.descriptors:
         required.update(["ARTIFACTS_FILE"])                                         
     with open(configfile) as infile: #TODO: Make as dict

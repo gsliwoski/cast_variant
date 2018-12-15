@@ -4,7 +4,7 @@ import alignments
 import IO
 import traceback
 from exceptions import *
-from descriptors import Structure, add_descriptors, HEADERS
+from descriptors import Structure, add_structure_descriptors, add_uniprot_descriptors, HEADERS
 import time
 
 VAR_STRUCT_HEADER = ["transcript","uniprot","isoform",
@@ -357,7 +357,11 @@ def worker(variant, datasets, arguments):
                     print debug_head+"Empty table encountered while adding descriptors to {} {}".format(current_transcript,uniprot)
                 dtimes.append(time.time()-dtimes[0])                    
                 continue
-            fulltable = add_descriptors(table[0],arguments.descriptors,debug)
+            # Add the structure-based descriptors
+            fulltable = add_structure_descriptors(table[0],arguments.descriptors,debug)
+            # Add the uniprot feature group descriptors which only rely on uniprot position
+            if 'unp' in arguments.descriptors:
+                fulltable = add_uniprot_descriptors(table[0],debug)
             fulltable.sort_values(by = ["structure","chain","transcript_position",
                                         "structure_position","icode","varcode"],inplace=True)
             vartables.append([fulltable,var_df_header])
