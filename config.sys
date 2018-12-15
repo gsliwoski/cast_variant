@@ -1,7 +1,7 @@
 # Define what the dataset files are
 
-# Required sequence datasets and uniprot mappings for VEP processing
-SEQ_PATH ./sequences/ # Where required datasets are
+# Required datasets and uniprot mappings
+SEQ_PATH ./datasets/ # Where required datasets are
 SWISS_SEQ swissmodel.pickle # Model mapping
 UNP_SEQ unp.pickle # Uniprot sequences
 TRANS_SEQ trans.pickle # Transcript sequences

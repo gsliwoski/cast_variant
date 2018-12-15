@@ -1,0 +1,93 @@
+SIFTS:
+
+1. Summary file to place in /sequences/
+
+wget -q -N --reject -nH -nd --timeout=100000 ftp://ftp.ebi.ac.uk/pub/databases/msd/sifts/flatfiles/tsv/pdb_chain_uniprot.tsv.gz
+
+2. All XML alignments (takes a while)
+
+wget -r -N --no-parent --reject -nH -nd --timeout=100000 --tries=100 -P MYDIR/xml ftp://ftp.ebi.ac.uk/pub/databases/msd/sifts/split_xml 
+
+---
+
+Ensembl:
+
+ftp://ftp.ensembl.org/pub/release-93/fasta/homo_sapiens/pep/Homo_sapiens.GRCh38.pep.all.fa.gz
+
+---
+
+SWISSMODEL:
+
+1. Download all models
+
+wget https://swissmodel.expasy.org/repository/download/core_species/9606_coords.tar.gz -nH --no-parent -P MYDIR -nd
+
+2. Download metadata
+
+wget https://swissmodel.expasy.org/repository/download/core_species/9606_meta.tar.gz -nH --no-parent -P MYDIR -nd
+
+3. tar -xzf both files
+
+---
+
+UniProt:
+
+1. Download Fasta for all protein sequences
+
+ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
+
+2. Download additional uniprot data (for canonical isoform identification)
+
+wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/knowledgebase/docs/sec_ac.txt -nd nH
+wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.dat.gz -nd -nH
+
+3. Process mapping file
+
+sed '1,30d' sec_ac.txt | sed 's/ \+ /\t/g' | sed 's/____________/Secondary/;s/__________/Primary/' > uniprot_sec2prim_ac.txt
+
+(can now remove sec_ac.txt)
+
+3. Process main uniprot dataset
+
+./process_uniprot.py
+
+(can now remove uniprot_sprot.dat.gz)
+
+---
+
+RefSeq
+
+1. Download sequences
+
+wget ftp://ftp.ncbi.nlm.nih.gov/refseq/release/vertebrate_mammalian/*protein.faa* -t 100 -N -nd -nH -np -P $DATE
+
+2. Concatenate them into refseq_mammalian.fasta
+
+3. gzip it
+
+---
+
+Descriptor-required datasets:
+
+UniProt:
+
+1. Download entire XML dataset from uniprot
+wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.xml.gz -nd nH
+
+2. Decompress XML
+gunzip uniprot_sprot.xml.gz
+
+3. Prepare uniprot dataframe pickle with extracted feature groups
+./prepare_uniprot_features.py
+
+4. Delete raw datafile
+rm uniprot_sprot.xml
+
+---
+
+Final comments:
+0) Make sure to change any paths desired in config.sys and alter where it expects to find config.sys if not in parent directory
+a) put both the sifts and swissmodels in the same directory and update the datapath var to point to that dir
+b) update the refseqfile variable to point to the refseq file
+c) update the swissmodelpath variable to point to the full path for swissmodels
+d) The uniprot feature pickle is a pandas df pickle and must be opened with pandas.read_pickle(UNP_DATA)

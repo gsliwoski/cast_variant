@@ -162,6 +162,23 @@ Note: descriptor columns are attached to the .variant output file only (not the 
 
 **peptide** = May be subject to artifact filtering. Returns closest_chain_distance (minimum atom-pair distance from variant residue to any other chains in structure), chains_within_5A (comma separated list of chains with minimum atom-pair distance from variant residue less than 5)
 
+**unp** = Uniprot-based annotations. Downloading uniprot XML and running ./prepare_uniprot_features.py is required to use this. True/False features are added for pre-specified uniprot groups. These groups include
+
+1. cleaved = initiator methionine, propeptide [regions of the protein that are not present in its mature state]
+2. sorting = signal, transit peptide, signal peptide [regions that are used to deliver protein to proper organelle/place in cell
+3. membrane = transmembrane, intramembrane, transmembrane region, intramembrane region [regions found within a membrane]
+4. binding region = calcium binding, DNA binding, DNA-binding region, nucleotide binding, calcium-binding region, phosphate-binding region, nucleotide phosphate-binding region, lipid moiety-binding region [regions that bind various ligands. distinguished from sites since they are typically much larger and less precise]
+5. motif = motif, short sequence motif [predefined motifs less than 20 residues in length]
+6. binding site = active site, metal binding, binding site, site, metal ion-binding site [precise binding sites for various ligands, typically smaller than binding regions]
+7. ptm = modified residue, lipidation, glycosylation, glycosylation site [residues that undergo post-transcriptional modification either to anchor the protein to a specific site (ie: lipidation/glycosylation) or regulation (phosphorylation)]
+8. covalent = disulfide bond, cross-link [residues involved in covalent interactions with other residues typically important for conformational stability] 
+
+The following features are known and not used for any category either because they are too imprecise or are not currently considered useful information:
+
+chain, peptide, domain, repeat, coiled coil, coiled-coil region, compositional bias, non-standard residue, alternative sequence, natural variant, mutagenesis, mutagenesis site, sequence uncertainty, sequence conflict, non-adjacent residues, non-terminal residues, helix, turn, beta strand, strand, sequence variant, splice variant, compositionally biased region, zinc finger region, non-standard amino acid, non-terminal residue, topological domain, region, region of interest, non-consecutive residues
+
+Note: for any features that are defined by start and end residues, all residues in between are flagged. Disulfide bonds are flagged for both cysteines involved.
+
 ### Results
 
 Assuming noalign and completed is not set, will create 2 files and potentially 3 more depending on variant list.
