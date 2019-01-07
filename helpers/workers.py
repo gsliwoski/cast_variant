@@ -6,6 +6,7 @@ import traceback
 from exceptions import *
 from descriptors import Structure, add_structure_descriptors, add_uniprot_descriptors, HEADERS
 import time
+import sys
 
 VAR_STRUCT_HEADER = ["transcript","uniprot","isoform",
                "transcript_identity","transcript_position",
@@ -47,6 +48,7 @@ def cast_variants(variants, datasets,arguments):
                        initializer=init,
                        initargs=(l,))
     results = list()                       
+    print "Casting variants across {} transcripts".format(len(variants.keys()))
     for x in variants.keys():
         current_var = [x]+variants[x]
         if arguments.num_procs>1:
@@ -90,6 +92,7 @@ def worker(variant, datasets, arguments):
     else:
         lock = None
     current_transcript, current_protein, variant_list = variant
+
     print "Casting {} variants".format(current_transcript)
     var_df_header = VAR_STRUCT_HEADER[:]
     if debug:
@@ -101,6 +104,9 @@ def worker(variant, datasets, arguments):
     try:
         uniprot,isoform = current_protein
         astring = "{}_{}".format(current_transcript,uniprot)
+        if current_transcript == "ENST00000359218": #TODO: Deal with extremely long transcripts like Titin?
+            print "Skipping {}, Titin is currently not allowed".format(current_transcript)
+            raise WorkerException("loading stage","Titin ({}) is prevented".format(current_transcript))
         if debug:
             ce = round(time.time()-worker_start_time,1)
             print debug_head+"Getting sequences for {} [{} secs elapsed]".format(astring,ce)
@@ -307,7 +313,6 @@ def worker(variant, datasets, arguments):
                 print debug_head+"final model with {} has {} rows [{} secs elapsed]".format(uniprot,len(model_df.index),ce)
             var_model_df = model_df.merge(variant_table,how='inner',on=['transcript_position'])
             var_model_df = var_model_df[var_model_df['structure_position']!=' ']
-            #Add descriptors to aligned positions
             var_model_df.sort_values(by = ["structure","chain","transcript_position",
                                          "structure_position","icode","varcode"],inplace=True)     
             if debug:
@@ -361,7 +366,7 @@ def worker(variant, datasets, arguments):
             fulltable = add_structure_descriptors(table[0],arguments.descriptors,debug)
             # Add the uniprot feature group descriptors which only rely on uniprot position
             if 'unp' in arguments.descriptors:
-                fulltable = add_uniprot_descriptors(table[0],debug)
+                fulltable = add_uniprot_descriptors(fulltable,debug)
             fulltable.sort_values(by = ["structure","chain","transcript_position",
                                         "structure_position","icode","varcode"],inplace=True)
             vartables.append([fulltable,var_df_header])
@@ -375,8 +380,9 @@ def worker(variant, datasets, arguments):
     if not arguments.noalign:
         for table in alntables:
             IO.write_table(table,"alignments")
+    asdf = 0
     for table in vartables:
-        IO.write_table(table,"variants")
+        IO.write_table(table,"variants")       
     if arguments.completed:
         IO.write_complete(varcodes)
     if multiproc:

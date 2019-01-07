@@ -10,6 +10,8 @@ from numpy import where as npwhere
 from numpy.linalg import norm as norm
 import sys
 from numpy import vectorize
+from StringIO import StringIO
+import gzip
 
 INSULIN = "P01308"
 BETA2MG = "P61769"
@@ -175,7 +177,7 @@ class Structure(object):
     Filler descriptors are -999 for all numeric values and ? for all character
     '''
     
-    def __init__(self,url=None,filename=None,model=None,artifacts=True):
+    def __init__(self,url=None,filename=None,model=None,artifacts=True,assemblies=False):
         '''
         Takes a PDB, if url then uses urlstream as parser input
         if filename, then uses filename as parser input
@@ -198,6 +200,8 @@ class Structure(object):
         self.struct = None
         self.debug = False
         self.debug_head = ""
+        self.assemblies = dict()
+        
         if url:
             try:
                 self.filename = 'url'
@@ -224,6 +228,19 @@ class Structure(object):
             self.id = model.get_id()
             self.header += self.res_header
 
+        if assemblies:
+            '''
+            Gathers the biological assemblies as defined in the cif.
+            Only works with PDB IDs that have an accessible cif in the same path
+            Creates a dict where each chain is a key and each value is list of assembly IDs
+            containing that chain
+            '''
+            if self.filename!="url" or len(self.id)!=4:
+                return
+            cifpath = urllib2.urlopen(PDB_URL_FORMAT.format(url.upper())[:-3]+".cif")
+            
+            
+            
     def flag_debug(self):
         self.debug = True
         self.debug_head = "DEBUG: descriptors: Structure({}): ".format(self.id)
@@ -731,6 +748,12 @@ class Structure(object):
             self.id, self.filename, self.dssp is not None, self.ligand is not None,
             self.nucleotide is not None, self.peptide is not None)
 
+    def get_assemblies(self,chainID):
+        '''
+        Gets a list of assemblies containing a given chain
+        Takes chain ID and returns list of assemblies
+        '''
+        
 def add_structure_descriptors(df,descriptors,debug):
     '''
     Add artifacts to dataframe
@@ -830,7 +853,7 @@ def add_uniprot_descriptors(df, debug):
     debug_head = "DEBUG: descriptors: add_uniprot_descriptors: "
     if debug:
         print debug_head+"Adding uniprot category descriptors"
-    unpdf = UNP_DF[UNP_DF.uniprot==current_unp]
+    unpdf = UNP_DF[UNP_DF.uniprot==current_unp].drop(['uniprot'],axis=1)
     if unpdf.empty: # Probably don't need to do this as nulls are filled in at the end
         #No features assigned to this uniprot, need to use holders
         if debug:
