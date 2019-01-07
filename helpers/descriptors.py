@@ -825,7 +825,7 @@ def add_structure_descriptors(df,descriptors,debug):
             allstructs = pd.concat([current_df,allstructs])
         if debug:
             print "Current allstructs df has {} rows".format(len(allstructs.index))                                                                             
-    return pd.merge(df,allstructs,how='left',
+    return pd.merge(df,allstructs.drop_duplicates(),how='left',
                     on=['structure','chain','structure_position','icode'])
 
 def split_residue_codes(rescodes):
@@ -868,4 +868,4 @@ def add_uniprot_descriptors(df, debug):
     ndf = pd.merge(df,unpdf,how="left",on='uniprot_position')
     for h in HEADERS['unp']:
         ndf[h] = npwhere(ndf[h].isnull(),HOLDERS[h],ndf[h])
-    return ndf        
+    return ndf.drop_duplicates()

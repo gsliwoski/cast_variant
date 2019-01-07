@@ -4,7 +4,7 @@ from os import path
 import sys
 import pickle
 
-SEQ_PATH = "./sequences/"
+SEQ_PATH = "./datasets/"
 SIFTS = "sifts.pickle"
 SWISSMODEL = "swissmodel.pickle"
 TRANS = "trans.pickle"
