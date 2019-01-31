@@ -51,6 +51,28 @@ Consequence ENST#   Position    Amino\_acids(R/A)    ENSP#   Uniprot Uniprot-iso
 
 Input style 2: Raw VEP output
 
+https://useast.ensembl.org/Tools/VEP
+
+When running VEP, the following settings beyond default are recommended:
+
+Transcript database to use:
+
+Ensembl/GENCODE and RefSeq transcripts
+
+Identifiers: check all of them (REQUIRED identifiers: Protein, UniProt)
+
+Variants and frequency data: Leave as default
+
+Additional annotation: Leave as default
+
+Predictions: Leave as default
+
+Filtering options: Return results for variants in coding regions only (Leave restrict results as show all results)
+
+Example VEP command line that uses all these settings:
+
+./vep --af --appris --biotype --ccds --check_existing --coding_only --distance 5000 --hgvs --merged --polyphen b --protein --pubmed --regulatory --sift b --species homo_sapiens --symbol --tsl --uniprot --cache --input_file [input_data]
+
 Must use flag -v or --vep to indicate it's vep input.
 
 First, a single representation is selected for each unique variant based on priorities below.
