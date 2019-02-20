@@ -1,6 +1,6 @@
 SIFTS:
 
-1. Summary file to place in /sequences/
+1. Summary file to place in /datasets/
 
 wget -q -N --reject -nH -nd --timeout=100000 ftp://ftp.ebi.ac.uk/pub/databases/msd/sifts/flatfiles/tsv/pdb_chain_uniprot.tsv.gz
 
@@ -12,7 +12,7 @@ wget -r -N --no-parent --reject -nH -nd --timeout=100000 --tries=100 -P MYDIR/xm
 
 Ensembl:
 
-ftp://ftp.ensembl.org/pub/release-93/fasta/homo_sapiens/pep/Homo_sapiens.GRCh38.pep.all.fa.gz
+wget -N --tries=100 --timeout=100000 ftp://ftp.ensembl.org/pub/release-93/fasta/homo_sapiens/pep/Homo_sapiens.GRCh38.pep.all.fa.gz
 
 ---
 
@@ -34,11 +34,11 @@ UniProt:
 
 1. Download Fasta for all protein sequences
 
-ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
+wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
 
 2. Download additional uniprot data (for canonical isoform identification)
 
-wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/knowledgebase/docs/sec_ac.txt -nd nH
+wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/knowledgebase/docs/sec_ac.txt -nd -nH
 wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.dat.gz -nd -nH
 
 3. Process mapping file
