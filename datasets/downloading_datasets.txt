@@ -60,7 +60,7 @@ STAGE 2: Sequences and minor datasets
 
 [D] Ensembl Sequences - download into datasets folder
 
-wget -N --tries=100 --timeout=100000 ftp://ftp.ensembl.org/pub/release-93/fasta/homo_sapiens/pep/Homo_sapiens.GRCh38.pep.all.fa.gz 
+wget -N --tries=100 --timeout=100000 ftp://ftp.ensembl.org/pub/current_fasta/homo_sapiens/pep/Homo_sapiens.GRCh38.pep.all.fa.gz 
 
 --
 
