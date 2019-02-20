@@ -1,93 +1,154 @@
-SIFTS:
+Notes:
 
-1. Summary file to place in /datasets/
+* There are two main types of datasets:
+    * Large directory hierarchies that are downloaded directly from source - have their own paths
+    * When using download commands below, change {MYDIR} to root path where you want to put them
+        * SWISSMODEL
+        * SIFTS
+        * PDB
+    * Processed datasets - All within the same place (by default /datasets/)
+    * Below, that folder is referred to as the 'datasets folder'
+        * Ensembl, RefSeq, Uniprot sequences
+        * Main SIFTS mapping file
+        * Uniprot features
+        * Pickles generated once everything is downloaded
 
-wget -q -N --reject -nH -nd --timeout=100000 ftp://ftp.ebi.ac.uk/pub/databases/msd/sifts/flatfiles/tsv/pdb_chain_uniprot.tsv.gz
+* This process has 4 main stages:
+    * Downloading the very large directory hierarchies
+    * Downloading the sequence and other minor datasets
+    * Updating config.sys to point to all of the different datasets (found in root script folder)
+    * Running processing scripts to finalize datasets
 
-2. All XML alignments (takes a while)
+#######################
+STAGE 1: LARGE DATASETS
+#######################
 
-wget -r -N --no-parent --reject -nH -nd --timeout=100000 --tries=100 -P MYDIR/xml ftp://ftp.ebi.ac.uk/pub/databases/msd/sifts/split_xml 
+[A] SIFTS:
 
----
+** All XML alignments (takes a while) - 'unsplits' them into a single directory
 
-Ensembl:
+wget -r -N --no-parent --reject -nH -nd --timeout=100000 --tries=100 -P {MYDIR}/xml ftp://ftp.ebi.ac.uk/pub/databases/msd/sifts/split_xml 
 
-wget -N --tries=100 --timeout=100000 ftp://ftp.ensembl.org/pub/release-93/fasta/homo_sapiens/pep/Homo_sapiens.GRCh38.pep.all.fa.gz
+--
 
----
+[B] PDB:
 
-SWISSMODEL:
+** All PDB structures (takes a while) - 'unsplits' them into a single directory
+
+wget -r --no-parent -N --reject -nH -nd --timeout=200000 --tries=100 ftp://ftp.wwpdb.org/pub/pdb/data/structures/divided/pdb -P {MYDIR}/structures/
+
+--
+
+[C] SWISSMODEL:
+
+** All SWISSMODEL structures (takes a while) - retains the directory hierarchy from source
 
 1. Download all models
 
-wget https://swissmodel.expasy.org/repository/download/core_species/9606_coords.tar.gz -nH --no-parent -P MYDIR -nd
+wget https://swissmodel.expasy.org/repository/download/core_species/9606_coords.tar.gz -nH --no-parent -P {MYDIR} -nd
 
 2. Download metadata
 
-wget https://swissmodel.expasy.org/repository/download/core_species/9606_meta.tar.gz -nH --no-parent -P MYDIR -nd
+wget https://swissmodel.expasy.org/repository/download/core_species/9606_meta.tar.gz -nH --no-parent -P {MYDIR} -nd
 
 3. tar -xzf both files
 
----
 
-UniProt:
+#####################################
+STAGE 2: Sequences and minor datasets
+#####################################
 
-1. Download Fasta for all protein sequences
+[D] Ensembl Sequences - download into datasets folder
+
+wget -N --tries=100 --timeout=100000 ftp://ftp.ensembl.org/pub/release-93/fasta/homo_sapiens/pep/Homo_sapiens.GRCh38.pep.all.fa.gz 
+
+--
+
+[E] RefSeq Sequences - download into datasets folder
+
+wget ftp://ftp.ncbi.nlm.nih.gov/refseq/release/vertebrate_mammalian/*protein.faa* -t 100 -N -nd -nH -np -P {datasets folder}
+
+--
+
+[F] Uniprot Sequences and reference libraries - download into datasets folder
+
+1. Raw fasta sequences
 
 wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz
 
-2. Download additional uniprot data (for canonical isoform identification)
+2. Isoform-transcript matching files
 
 wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/knowledgebase/docs/sec_ac.txt -nd -nH
 wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.dat.gz -nd -nH
 
-3. Process mapping file
+3. Large XML dataset used to generate descriptors
 
+wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.xml.gz -nd nH
+
+--
+
+[G] SIFTs reference file - place in datasets folder *NOT* the main SIFTS library folder
+
+wget -q -N --reject -nH -nd --timeout=100000 ftp://ftp.ebi.ac.uk/pub/databases/msd/sifts/flatfiles/tsv/pdb_chain_uniprot.tsv.gz
+
+
+#########################################
+STAGE 3: Edit all the paths in config.sys
+#########################################
+
+* Should be one directory up, the .pickle files will be generated during processing
+
+
+######################################
+STAGE 4: Process and finalize datasets
+######################################
+
+* All these steps are performed in the datasets directory
+
+[H] Combine Refseq fastas
+
+1. Concatenate into single file
+
+cat *.faa > refseq_mammalian.fasta
+
+2. gzip the fasta file
+
+gzip refseq_mammalian.fasta
+
+3. Remove original files (probably want to make sure you don't have your own .faa files here first)
+
+rm -f *.faa
+
+--
+
+[I] Process uniprot sequence and mapping datasets
+
+1. Create mapping file for secondary uniprot ID to primary ID
 sed '1,30d' sec_ac.txt | sed 's/ \+ /\t/g' | sed 's/____________/Secondary/;s/__________/Primary/' > uniprot_sec2prim_ac.txt
 
 (can now remove sec_ac.txt)
 
-3. Process main uniprot dataset
+2. Process the main uniprot sequence data (takes a while)
 
 ./process_uniprot.py
 
 (can now remove uniprot_sprot.dat.gz)
 
----
+3. Decompress XML
 
-RefSeq
-
-1. Download sequences
-
-wget ftp://ftp.ncbi.nlm.nih.gov/refseq/release/vertebrate_mammalian/*protein.faa* -t 100 -N -nd -nH -np -P $DATE
-
-2. Concatenate them into refseq_mammalian.fasta
-
-3. gzip it
-
----
-
-Descriptor-required datasets:
-
-UniProt:
-
-1. Download entire XML dataset from uniprot
-wget -N --tries=100 --timeout=100000 ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.xml.gz -nd nH
-
-2. Decompress XML
 gunzip uniprot_sprot.xml.gz
 
-3. Prepare uniprot dataframe pickle with extracted feature groups
+4. Prepare uniprot descriptor dataframe (takes a very long time)
+
 ./prepare_uniprot_features.py
 
-4. Delete raw datafile
+5. Delete raw datafile
 rm uniprot_sprot.xml
 
----
+[J] Generate final sequence pickles (takes a while)
 
-Final comments:
-0) Make sure to change any paths desired in config.sys and alter where it expects to find config.sys if not in parent directory
-a) put both the sifts and swissmodels in the same directory and update the datapath var to point to that dir
-b) update the refseqfile variable to point to the refseq file
-c) update the swissmodelpath variable to point to the full path for swissmodels
-d) The uniprot feature pickle is a pandas df pickle and must be opened with pandas.read_pickle(UNP_DATA)
+./pickle_sequences.py
+
+Minor Notes:
+* The uniprot feature pickle is a pandas df pickle and must be opened with pandas.read_pickle()
+* uniprot_sprot.xml is not required for main program runs and after all processing steps are done can be removed

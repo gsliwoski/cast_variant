@@ -48,7 +48,11 @@ with open(CONFIG_FILE) as infile:
         line = rawline.strip().split("#")[0].split()
         if len(line)<2: continue
         curset,curval = line[:2]
-        CONFIG[curset] = curval   
+        CONFIG[curset] = curval
+    CONFIG['ENST_SEQ_FILE'] = "./Homo_sapiens.GRCh38.pep.all.fa.gz"
+    CONFIG['UNP_SEQ_FILE'] = "./uniprot_sprot.fasta.gz"
+    CONFIG['REF_SEQ_FILE'] = "./refseq_mammalian.fasta.gz"
+    CONFIG['SIFTS_MAP'] = "./pdb_chain_uniprot.tsv.gz"
     required = required - set(CONFIG.keys())
 if len(required)>0:
     sys.exit("Missing required config line(s) for {} in config file".format(",".join(required)))
@@ -262,4 +266,8 @@ if not check_skip(CONFIG['SIFTS_SEQ']):
     print "{} unp sifts sets pickled".format(len(sift.keys()))
 
 print "Done pickling"
-    
+print "These files are no longer needed:\n"
+print "Homo_sapiens.GRCh38.pep.all.fa.gz"
+print "uniprot_sprot.fasta.gz"
+print "refseq_mammalian.fasta.gz"
+print "pdb_chain_uniprot.tsv.gz"

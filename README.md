@@ -49,6 +49,12 @@ Consequence ENST#   Position    Amino\_acids(R/A)    ENSP#   Uniprot Uniprot-iso
 
 >inframe_deletion        ENST00000358465 720     S/-     ENSP00000351250 Q9UPN9  Q9UPN9-1        36
 
+**With this input the following variants will be skipped without expand variant flag (untested)**
+
+* frameshift
+* inframe_deletion
+* stop_gained = skipped regardless since NMD
+
 Input style 2: Raw VEP output
 
 https://useast.ensembl.org/Tools/VEP
@@ -110,23 +116,27 @@ Each unique variant is represented by the first occurence in the following list 
 
 ### Required datasets
 
+**See /datasets/downloading_datasets.txt for complete downloading instructions**
+
 1. A set of swissmodel structures in the directory hierarchy as created through direct retrieval of SWISSMODEL database
-2. A set of all SIFTS alignments in hierarchy as directly downloaded from SIFTS database. (split_xml)
-3. Homo_sapiens.GRCh38.pep.all.fa.gz = FASTA of all human protein sequences from ENSEMBL (put in /sequences/)
-4. pdb_chain_uniprot.tsv.gz = Summary file from SIFTS that lists all alignments in SIFTS (put in /sequences/)
-5. uniprot_sprot.fasta.gz = FASTA of all canonical human protein sequences from Uniprot (put in /sequences/)
-6. refseq_mammalian.fasta.gz = fasta of all refseq sequences
+2. A set of all SIFTS alignments downloaded from SIFTS database. (split_xml)
+3. A set of all PDB structures downloaded from rcsb (.pdb format)
+4. Homo_sapiens.GRCh38.pep.all.fa.gz = FASTA of all human protein sequences from ENSEMBL (in datasets folder
+5. pdb_chain_uniprot.tsv.gz = Summary file from SIFTS that lists all alignments in SIFTS (in datasets folder)
+6. uniprot_sprot.fasta.gz = FASTA of all canonical human protein sequences from Uniprot (in datasets folder)
+7. refseq_mammalian.fasta.gz = fasta of all refseq sequences (in datasets folder)
+8. uniprot_sprot_human.dat (in datasets folder)
+9. uniprot_sprot.xml (in datasets folder)
+10. sifts.pickle = generated in processing step (datasets folder)
+8. swissmodel.pickle = generated in processing step (datasets folder)
+9. trans.pickle = generated in processing step (datasets folder)
+10. uniprot_canonical_isoforms.tab = generated in processing step, used to filter secondary uniprot IDs (datasets folder)
+11. uniprot_sec2prim_ac.txt = generated in processing step, used to match transcripts to uniprot IDs (datasets folder)
+12. unp_features.pickle = generated in processing step (datasets folder)
+13. unp.pickle = generated in processing step (datasets folder)
 
-Note: See /sequences/downloading_datasets.txt for more information
+**config.sys** = contains all paths for necessary sequences and applications. Each setting is space separated ID and value.
 
-**config.sys** = contains all paths for necessary sequences and applications. Applications not required given command line options will not be checked but sequence pickles are required for all runs. Each setting is space separated ID and value
-
-**Run:**
-```
-/sequences/pickle_sequences.py
-```
-
-to prepare files.
 
 ### Command line
 

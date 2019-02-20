@@ -26,7 +26,7 @@ pid = os.getpid()
 #                           O = other) [only stores first occurrence] (region)
 
 # Change location of config file if using unexpected hierarchy
-CONFIG_FILE = "../config.sys"
+#CONFIG_FILE = "../config.sys"
 
 feature_groups = {'cleaved': ['initiator methionine',
                              'propeptide'],
@@ -89,24 +89,24 @@ feature_groups = {'cleaved': ['initiator methionine',
                              'region of interest',
                              'non-consecutive residues']}
 
-assert os.path.isfile(CONFIG_FILE), "{} not found".format(CONFIG_FILE)
+#assert os.path.isfile(CONFIG_FILE), "{} not found".format(CONFIG_FILE)
 
-DATA_FILE = None
-OUT_FILE = None
+DATA_FILE = "./uniprot_sprot.xml"
+OUT_FILE = "unp_features.pickle"
 
-with open(CONFIG_FILE) as infile:
-    for rawline in infile:
-        line = rawline.strip().split("#")[0].split()
-        if len(line)<2:continue
-        if line[0]=="UNP_RAW":
-            DATA_FILE = line[1]
-        elif line[0]=="UNP_FEATURES":
-            OUT_FILE = line[1]                        
-        if DATA_FILE is not None and OUT_FILE is not None:
-            break
+#with open(CONFIG_FILE) as infile:
+#    for rawline in infile:
+#        line = rawline.strip().split("#")[0].split()
+#        if len(line)<2:continue
+#        if line[0]=="UNP_RAW":
+#            DATA_FILE = line[1]
+#        elif line[0]=="UNP_FEATURES":
+#            OUT_FILE = line[1]                        
+#        if DATA_FILE is not None and OUT_FILE is not None:
+#            break
 
-assert DATA_FILE is not None, "Missing UNP_RAW line in {}".format(CONFIG_FILE)                             
-assert OUT_FILE is not None, "Missing UNP_FEATURES line in {}".format(CONFIG_FILE)
+#assert DATA_FILE is not None, "Missing UNP_RAW line in {}".format(CONFIG_FILE)                             
+#assert OUT_FILE is not None, "Missing UNP_FEATURES line in {}".format(CONFIG_FILE)
 
 WARNINGS_FILE = OUT_FILE+".warnings"
 

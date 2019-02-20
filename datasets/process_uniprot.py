@@ -97,4 +97,6 @@ for line in human:
                 print "Warning {} from {} appears multiple times".format(ct,unps)
             trans[ct]=assignment
 output.close()
-print "Finished processing, uniprot_sprot.dat.gz can be removed"           
+print "Finished processing, the following files can be removed:\n"
+print "uniprot_sprot.dat.gz"
+print "uniprot_sprot_human.dat"
