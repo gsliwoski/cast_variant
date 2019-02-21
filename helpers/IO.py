@@ -154,6 +154,8 @@ def load_variants(args):
     if args.vep or check_vep(args.variants):
         if args.debug:
             print debug_head+"Converting VEP file to variants"
+        if not vep_format_check(args.variants):
+            sys.exit("VEP output must be in the txt output format selection. The vep format output is not currently supported")
         vepoutfile = path.splitext(path.basename(varfilename))[0]+".vep_selected"
         if path.isfile(vepoutfile):
             print "Found potential selected file {} already created, overwrite it?".format(vepoutfile)
@@ -227,7 +229,22 @@ def check_vep(variantsfile):
     v = infile.read(19)=='#Uploaded_variation'
     infile.close()
     return v
-            
+
+def vep_format_check(variantsfile):
+    '''
+    Quick checks the vep file 
+    to make sure it's the txt format selection
+    '''
+    #Try to open the file
+    try:
+        infile = open(varfilename)
+    except IOError as e:
+        sys.exit("Unable to open {}: {}".format(varfilename,e))
+    headline = [x.strip() for x in infile.readline().split("\t")]
+    v = headline[-1]!='Extra'
+    infile.close()
+    return v
+                
 # Process a single variant line
 def process_variant(variant,expand,debug):
     '''
