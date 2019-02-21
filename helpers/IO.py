@@ -151,7 +151,7 @@ def load_variants(args):
     varfilename = args.variants
     # If a raw VEP was given, select one consequence per coding variant
     # and then parse
-    if args.vep:
+    if args.vep or check_vep(args.variants):
         if args.debug:
             print debug_head+"Converting VEP file to variants"
         vepoutfile = path.splitext(path.basename(varfilename))[0]+".vep_selected"
@@ -214,6 +214,20 @@ def load_variants(args):
             sys.exit(e.fullmsg)
     return variants
 
+def check_vep(variantsfile):
+    '''
+    Quick checks the variants file to see if it's a vep file
+    in case user forgot to pass -v
+    '''
+    #Try to open the file
+    try:
+        infile = open(varfilename)
+    except IOError as e:
+        sys.exit("Unable to open {}: {}".format(varfilename,e))
+    v = infile.read(19)=='#Uploaded_variation'
+    infile.close()
+    return v
+            
 # Process a single variant line
 def process_variant(variant,expand,debug):
     '''
@@ -294,7 +308,33 @@ def process_variant(variant,expand,debug):
     if debug:
         print debug_head+"Formatted variant to {} {}/{} {}".format(position,refaa,altaa,annotation)        
     return [position,refaa,altaa,annotation]
-    
+
+def get_uniprot_from_canonical(trans, canonical, debug):
+    '''
+    Gets all uniprots assigned to given transcript
+    Only provides one isoform, based on priority:
+    canonical = YES
+    canonical = Unassigned
+    canonical = NO
+    Then lowest in alphabetical order
+    '''
+    debug_head = "DEBUG: IO: get_uniprot_from_canonical: "    
+    sel = canonical[canonical.Transcript==trans]
+    unp = list()
+    iso = list()
+    if debug:
+        print "Found {} uniprot entries for {}".format(sel.shape[0],trans)
+    if sel.shape[0] > 0:
+        # Filter out secondary if a primary remains
+        if sel[~sel.Uniprot.isin(secondary)].shape[0] > 0:
+            sel = sel[~sel.Uniprot.isin(secondary)]
+        for name,group in sel.groupby('Uniprot'):
+            unp.append(name)
+            iso.append(list(group.sort_values(['score','Isoform']).Isoform)[0])
+    if debug:
+        print debug_head+"Settled on {}, {} for {}".format(unp[0],iso[0],trans)
+    return unp,iso        
+        
 # Iterate through variant lines    
 def parse_varfile(varfile,args):
     '''
@@ -312,8 +352,8 @@ def parse_varfile(varfile,args):
     col 3 = Transcript Position
     col 4 = Mutation as refaa/altaa
     col 5 = protein ID
-    col 6 = Uniprot ID
-    col 7 = Uniprot-Isoform
+    col 6 = Uniprot ID, assigned if blank
+    col 7 = Uniprot-Isoform, assigned if blank
     col 8 = optional unique variant code
             useful when handling non-missense variants
     Returns a dict with entries:
@@ -326,7 +366,8 @@ def parse_varfile(varfile,args):
     skipped = list()
     variants = dict()
     count = 0
-    
+    canonical_uniprot = None
+    secondary = None
     for line in varfile:
         # Skip blank lines
         # Remove comments
@@ -357,6 +398,20 @@ def parse_varfile(varfile,args):
                 raise ParseWarning("variant_file","incomplete line: {}".format(
                                                "\t".join(line)))
             consequence,trans,pos,var,protein,unp,iso = line[:7]
+            if unp.strip() == "":
+                if canonical_uniprot is None:
+                    canonical_uniprot = load_canonical(debug)
+                    canonical_uniprot = canonical_uniprot[~pd.isnull(canonical_uniprot.Canonical)]
+                    scoremap = {'YES': 1, 'Unassigned': 2, 'NO': 3}
+                    canonical_uniprot['score'] = map(lambda x: scoremap[x], canonical_uniprot.Canonical)
+                    secondary = [x[0] for x in load_sec2prime(debug)]                  
+                unp,iso = get_uniprot_from_transcript(trans, canonical_uniprot, secondary, debug) 
+            else:
+                unp = [unp]
+                iso = [iso]
+            # For now, just use the first unp returned
+            unp = unp[0]
+            iso = iso[0]                
             try:
                 varcode = line[7]
             except IndexError:
@@ -366,8 +421,12 @@ def parse_varfile(varfile,args):
                                    var,
                                    protein,
                                    unp])
+            if len(unp) == 0:
+                if debug:
+                    print debug_head+"unable to assign unp entry for {}, skipping {}".format(trans,varcode)
+                skipped.append("\t".join(line+["unable to assign uniprot"]))
+                continue                    
 
-            
 #            if continue_flag and "{}_{}".format(varcode, in completed: continue                               
             current_var = process_variant(line,expand,debug)           
             #Use ENST identifier if its ensembl otherwise protein identifier
@@ -759,7 +818,7 @@ def parse_sifts(pdb):
     try:
         infile = gzip.open(pdbfile)
     except:
-        raise AlignException("parse_sifts", "failed to open {}".format(filename))
+        raise AlignException("parse_sifts", "failed to open {}".format(pdbfile))
     try:
         # SIFTS files should be XML so parse into table
         root = ET.parse(infile).getroot()

@@ -59,6 +59,8 @@ Input style 2: Raw VEP output
 
 https://useast.ensembl.org/Tools/VEP
 
+When giving variants from VEP, it will detect this by checking for #Uploaded_variation as the first cell, so if it fails to detect this, make sure you have a header in the VEP file.
+
 When running VEP, the following settings beyond default are recommended:
 
 Transcript database to use:

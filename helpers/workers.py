@@ -282,7 +282,7 @@ def worker(variant, datasets, arguments):
                     print debug_head+"generating model df for {} [{} secs elapsed]".format(uniprot,ce)
                 current_mod = current_aln.dict
                 current_mod.pop('transcript_aa')
-                current_mod['structure_identity'] = current_aln.identity("left")*100
+                current_mod['structure_identity'] = current_aln.identity("inner")*100
                 current_mod['structure'] = current_model['filename']
                 current_mod['chain'] = current_model['chain']
                 current_mod['complex_state'] = current_model['complex_state']
