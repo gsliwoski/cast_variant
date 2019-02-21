@@ -109,7 +109,7 @@ STAGE 4: Process and finalize datasets
 
 1. Concatenate into single file
 
-cat *.faa > refseq_mammalian.fasta
+zcat *.faa.gz > refseq_mammalian.fasta
 
 2. gzip the fasta file
 
@@ -117,7 +117,7 @@ gzip refseq_mammalian.fasta
 
 3. Remove original files (probably want to make sure you don't have your own .faa files here first)
 
-rm -f *.faa
+rm -f *.faa.gz
 
 --
 
@@ -146,6 +146,8 @@ gunzip uniprot_sprot.xml.gz
 rm uniprot_sprot.xml
 
 [J] Generate final sequence pickles (takes a while)
+
+**Run from the datasets folder
 
 ./pickle_sequences.py
 

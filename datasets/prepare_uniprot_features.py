@@ -2,7 +2,6 @@
 #import xml.etree.ElementTree as et
 import copy
 from lxml import etree
-import psutil
 import os,re,sys
 #from pandas import DataFrame
 import pandas as pd
