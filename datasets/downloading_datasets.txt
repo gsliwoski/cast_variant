@@ -31,7 +31,7 @@ wget -r -N --no-parent --reject -nH -nd --timeout=100000 --tries=100 -P {MYDIR}/
 
 --
 
-[B] PDB:
+[B] PDB: NOT CURRENTLY REQUIRED SO DON'T DOWNLOAD, WILL BE USED LATER ONCE BIOASSEMBLIES ARE ADDED
 
 ** All PDB structures (takes a while) - 'unsplits' them into a single directory
 

@@ -15,8 +15,9 @@ SIFTS_PATH /dors/capra_lab/data/sifts/2019-02-19/xml/
 
 ## PDBs: Download step [B]
 ##  PDB files must be in pdbXXXX.ent.gz format and in one directory (eg /structures/)
+## NOT CURRENTLY USED SO DON'T DOWNLOAD
 
-PDB_PATH /dors/capra_lab/data/pdb/2019-02-12/structures/
+#PDB_PATH /dors/capra_lab/data/pdb/2019-02-12/structures/
 
 ## SWISSMODELs: Download step [C]
 ##   directory hierarchy matches the source
