@@ -216,7 +216,7 @@ def load_variants(args):
             sys.exit(e.fullmsg)
     return variants
 
-def check_vep(variantsfile):
+def check_vep(varfilename):
     '''
     Quick checks the variants file to see if it's a vep file
     in case user forgot to pass -v
@@ -230,7 +230,7 @@ def check_vep(variantsfile):
     infile.close()
     return v
 
-def vep_format_check(variantsfile):
+def vep_format_check(varfilename):
     '''
     Quick checks the vep file 
     to make sure it's the txt format selection
@@ -541,7 +541,10 @@ def parse_vepfile(args):
                 "required column {} missing from header".format(x))
     if args.debug:
         print "DEBUG: IO: Reading CSV into dataframe"
-    df = pd.read_csv(open(vepfile),sep="\t")[required_cols]
+    try:
+        df = pd.read_csv(open(vepfile),sep="\t")[required_cols]
+    except KeyError as e:
+        sys.exit("Failed to parse VEP file, check to make sure it's tab-delimited, etc:\n Returned error: {}".format(e))                
     df.rename(columns={"#Uploaded_variation":"Varcode",
                        "Feature":"Transcript",
                        "ENSP":"Protein"},inplace=True)
