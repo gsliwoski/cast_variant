@@ -540,14 +540,12 @@ def parse_vepfile(args):
                 "Raw VEP file",
                 "required column {} missing from header".format(x))
     if args.debug:
-        print "DEBUG: IO: Reading CSV into dataframe"
-    try:
-        df = pd.read_csv(open(vepfile),sep="\t")[required_cols]
-    except KeyError as e:
-        sys.exit("Failed to parse VEP file, check to make sure it's tab-delimited, etc:\n Returned error: {}".format(e))                
+        print "DEBUG: IO: Reading CSV into dataframe"   
+    df = pd.read_csv(vepfile,sep="\t")[required_cols]
     df.rename(columns={"#Uploaded_variation":"Varcode",
                        "Feature":"Transcript",
                        "ENSP":"Protein"},inplace=True)
+    df['Varcode'] = df.Location + ":" + df.Allele
     if args.debug:
         print "DEBUG: IO: Filtering for non-synonymous (AA field >1)"
     df = df[df["Amino_acids"].str.len()>1]
@@ -622,6 +620,7 @@ def process_vep(vep,debug):
     if debug:
         print debug_head+"merging uniprot names to transcripts"
     vep = vep.merge(canonical,how="left",on=["Transcript","Protein"]) 
+
     try:
         if len(vep.index) == 0:
             raise ParseException("VEP file","Failed to extract variants from VEP file")
@@ -644,6 +643,7 @@ def process_vep(vep,debug):
         print debug_head+"Removing secondary uniprots"
     secondary = [x[0] for x in sec2prime]
     vep = vep[~vep.Uniprot.isin(secondary)]
+
     if debug:
         print debug_head+"Result df {} rows".format(len(vep.index))
 
@@ -662,8 +662,8 @@ def process_vep(vep,debug):
     # position for finding max position instance for repeats
     if debug:
         print debug_head+"Adding position column"
-    vep["quickpos"] = vep.Protein_position.str.extract('(\d+)',expand=False).astype(int)
-    vep_nullunp["quickpos"] = vep_nullunp.Protein_position.str.extract('(\d+)',expand=False).astype(int)
+    vep["quickpos"] = vep.Protein_position.astype(str).str.extract('(\d+)',expand=False).astype(int)
+    vep_nullunp["quickpos"] = vep_nullunp.Protein_position.astype(str).str.extract('(\d+)',expand=False).astype(int)
 
     print "selecting unique variants"
     # Loops through steps 1-6:
@@ -686,6 +686,8 @@ def process_vep(vep,debug):
     for outer in ["YES","Unassigned","NO"]:
         for inner in ["ENST","NM","XM"]:
             if len(vep.index)==0: break
+            if len(vep[(vep.Canonical==outer)\
+                    & (vep.Transcript.str.startswith(inner))].index)==0: continue
             print "{}: {}".format(outer,inner)
             group = vep[(vep.Canonical==outer)\
                     & (vep.Transcript.str.startswith(inner))]\
@@ -693,6 +695,7 @@ def process_vep(vep,debug):
             if vep_final is None:
                 vep_final = group.apply(lambda x: x.sort_values(["quickpos","Transcript"],
                                                         ascending=False).head(1))
+
                 vep = vep[~vep.Varcode.isin(vep_final.Varcode)]
             else:
                 vep,vep_final = addvars(vep,vep_final,group)
@@ -749,12 +752,18 @@ def process_vep(vep,debug):
                                    vep_final.Isoform)
     print "{} unique variants with uniprot assignment selected".format(
                                             vep_final.Varcode.nunique())
+    # report any variants that have multiple assignments
+    if vep_final.Varcode.nunique() < vep_final.shape[0]:
+        print "The following variant codes have multiple uniprot assignments and will be treated as individual variants for all pairs:"
+        dups = vep_final[vep_final.duplicated(subset='Varcode', keep=False)]
+        print vep_final[vep_final.Varcode.isin(dups.Varcode)][['Varcode','Uniprot']].to_string(index=False)
     vep = pd.concat([vep,vep_nullunp,vep_unassigned])
     if len(vep.index)>0:
         print "The following {} unique coding variants were unable to be assigned:".format(
             vep.Varcode.nunique())
         print ",".join(set(vep.Varcode))
-    return vep_final    
+    vep_final.to_csv("outtmp.tab",sep="\t",header=True,index=False)
+    return vep_final.drop_duplicates()    
       
 ##### DATASET LOADING #####
 
