@@ -1,0 +1,18 @@
+Loaded artifacts: 112 ligands, and 0 protein-protein interfaces
+1 unique coding variants loaded
+selecting unique variants
+YES: ENST
+1 unique variants with uniprot assignment selected
+1 Selected vars written to standard varfile example_VEP.vep_selected
+1 variants processed
+loading necessary datasets
+loaded 452402 transcript sequences
+loaded 20417 uniprots
+loaded 46267 sifts uniprots
+loaded 17411 swissmodel uniprots
+Casting variants across 1 transcripts
+Casting ENST00000357654 variants
+Loading preprocessed uniprot features
+Loaded 839479 total residues with uniprot features
+HTTP Error 404: Not Found
+Complete: 1 transcripts successfully aligned
