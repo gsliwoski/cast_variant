@@ -1,3 +1,6 @@
+# Tutorial
+Please see tutorial.pdf for a walkthrough and description of the datasets used and an example run of the cast_variant. Example input and output files are also precreated in main directory as example_VEP.
+
 # cast_variant
 Cast variant onto protein structure (PDB or model)
 
