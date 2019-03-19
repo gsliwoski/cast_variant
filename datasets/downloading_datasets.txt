@@ -66,7 +66,7 @@ wget -N --tries=100 --timeout=100000 ftp://ftp.ensembl.org/pub/current_fasta/hom
 
 [E] RefSeq Sequences - download into datasets folder
 
-wget ftp://ftp.ncbi.nlm.nih.gov/refseq/release/vertebrate_mammalian/*protein.faa* -t 100 -N -nd -nH -np -P {datasets folder}
+wget 'ftp://ftp.ncbi.nlm.nih.gov/refseq/release/vertebrate_mammalian/*protein.faa*' -t 100 -N -nd -nH -np -P {datasets folder}
 
 --
 
