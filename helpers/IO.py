@@ -815,7 +815,7 @@ def load_models(source, listfile = None):
                     line = line.strip().split('\t')
                     if len(line)<2: continue
                     if not path.isfile(line[1]):
-                        print "WARNING: {} from model list not found! SKIPPING!".format(line[1])
+                        print "WARNING: {} from model list {} not found! SKIPPING!".format(line[1],listfile)
                     elif line[0] not in models:
                         models[line[0]] = [line[1]]
                         n += 1           
