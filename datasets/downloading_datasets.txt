@@ -151,6 +151,28 @@ rm uniprot_sprot.xml
 
 ./pickle_sequences.py
 
+[K optional] Add your own custom sequences
+
+**Run from datasets folder
+
+./add_custom_sequences.py your_sequences.fasta destination.pickle
+
+your sequences must be in fasta format and the identifier must be the only thing in the header
+ex:
+
+> newtranscript1
+
+ASDFASDF
+
+> newtrainscript2
+
+JIWEFJIEFJ
+
+You must specify where you are adding the sequences. Therefore, if you are adding a transcript, use trans.pickle
+
+If you are adding a uniprot, use unp.pickle as the second argument.
+
+
 Minor Notes:
 * The uniprot feature pickle is a pandas df pickle and must be opened with pandas.read_pickle()
 * uniprot_sprot.xml is not required for main program runs and after all processing steps are done can be removed

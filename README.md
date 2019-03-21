@@ -244,3 +244,12 @@ Inputfilename.failures = any variants that failed during casting with a reason w
 
 Inputfilename.completed = list of completed transcripts
 
+## Misc
+
+You can add your own custom sequences to either transcripts or uniprots using:
+
+datasets/add_custom_sequences.py your_custom_sequences.fasta destination.pickle
+
+destination should be either the unp.pickle or trans.pickle depending on what you are adding.
+
+This must be done after pickling sequences
