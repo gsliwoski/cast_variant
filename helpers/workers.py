@@ -110,7 +110,7 @@ def worker(variant, datasets, arguments):
         if debug:
             ce = round(time.time()-worker_start_time,1)
             print debug_head+"Getting sequences for {} [{} secs elapsed]".format(astring,ce)
-        transcripts = datasets['transcripts']
+#        transcripts = datasets['transcripts']
         trans_seq = datasets['transcripts'][current_transcript]
         unp_seq = datasets['uniprots'][uniprot]
         #varcodes set is used to write completion table
@@ -126,7 +126,7 @@ def worker(variant, datasets, arguments):
             print debug_head+"generating variant table from variant_list [{} secs elapsed]".format(ce)
         variant_table = generate_variant_table(variant_list)
         
-        if not arguments.nopdb or not arguments.nouniprot:
+        if not arguments.nopdb or not arguments.nouniprot or custom_only:
             # Generate uniprot tables
             if debug:
                 ce = round(time.time()-worker_start_time,1)                
@@ -213,7 +213,7 @@ def worker(variant, datasets, arguments):
                 print debug_head+"Merged with variants for {} rows [{} secs elapsed]".format(len(var_pdb_df.index),ce)
             alntables.append([pdb_df,ALN_STRUCT_HEADER])
             vartables.append([var_pdb_df,var_df_header])
-
+            
     except WorkerException as e:
         if debug:
             print debug_head+"unp/pdb worker exception {} {}: {}".format(current_transcript,uniprot,e.fullmsg)
@@ -320,7 +320,7 @@ def worker(variant, datasets, arguments):
                 print debug_head+"final model var with {} has {} rows [{} secs elapsed]".format(uniprot,len(var_model_df.index),ce)
             alntables.append([model_df,ALN_STRUCT_HEADER])
             vartables.append([var_model_df,var_df_header])
-                           
+
     except WorkerException as e:
         if debug:
             print debug_head+"model worker exception {} {}: {}".format(current_transcript,uniprot,e.fullmsg)
@@ -347,6 +347,113 @@ def worker(variant, datasets, arguments):
         if multiproc:
             lock.release()
         return False   
+
+        # Map to any custom models that have been provided, very similar to SWISSMODEL loading
+    try:
+        if len(datasets['custom_models']) > 0:
+            # Generate the model table
+            if current_transcript not in datasets['custom_models']:
+                raise NoModelException()
+            modelids = datasets['custom_models'][current_transcript]
+            if debug:
+                ce = round(time.time()-worker_start_time,1)            
+                print debug_head+"{} total custom models for {} [{} secs elapsed]".format(len(modelids),uniprot,ce)
+            all_residues = None
+            for model in modelids:
+                current_model = IO.load_model(model,debug,'custom_model')
+                if len(current_model['fasta']) == 0:
+                    print "Warning, no residues in model {}".format(
+                                            current_model['filename'])
+                    continue
+                model_seq = current_model['fasta']
+                if debug:
+                    ce = round(time.time()-worker_start_time,1)    
+                    print debug_head+"aligning models to {} [{} secs elapsed]".format(uniprot,ce)
+                current_aln = alignments.Alignment(trans_seq, 
+                                                   model_seq,
+                                                   debug, 
+                                                   'transcript', 
+                                                   'structure')
+                current_aln.add(range(1,1+len(trans_seq)),
+                                'left',
+                                'transcript_position')
+                current_aln.add(current_model['resnums'],
+                                'right',
+                                'structure_position')
+                current_aln.add(current_model['icodes'],
+                                'right',
+                                'icode')                                               
+                if debug:
+                    ce = round(time.time()-worker_start_time,1)
+                    print debug_head+"generating model df for {} [{} secs elapsed]".format(uniprot,ce)
+                current_mod = current_aln.dict
+                current_mod.pop('transcript_aa')
+                current_mod['structure_identity'] = current_aln.identity("inner")*100
+                current_mod['structure'] = current_model['filename']
+                current_mod['chain'] = current_model['chain']
+                current_mod['complex_state'] = current_model['complex_state']
+                current_mod['template_identity'] = 100.0
+                current_mod['structure_isoform'] = 'custom_model'
+                current_df = pd.DataFrame.from_dict(current_mod)
+                if all_residues is None:
+                   all_residues = current_df
+                else:
+                    all_residues = pd.concat([all_residues,current_df],copy=False)            
+                if debug:
+                    ce = round(time.time()-worker_start_time,1)                
+                    print debug_head+"overall model df for {} has {} rows [{} secs elapsed]".format(uniprot,len(all_residues.index),ce)
+            if all_residues is None:
+                raise WorkerException("custom model parsing","no model residues")                           
+#            print "modelkeys: {}".format(list(all_residues))
+#            print "unpkeys: {}".format(list(unp_df))
+#            print "alnstructhead: {}".format(ALN_STRUCT_HEADER)
+#            print "varstructhead: {}".format(VAR_STRUCT_HEADER)
+            if debug:
+                ce = round(time.time()-worker_start_time,1)            
+                print debug_head+"merging models with tables for unp {} [{} secs elapsed]".format(uniprot,ce)
+            model_df = all_residues.merge(unp_df,how="left",on=['transcript_position']).round({'structure_identity':1})
+            model_df.sort_values(by = ["structure","chain","transcript_position",
+                                     "structure_position","icode"],inplace=True)
+            if debug:
+                ce = round(time.time()-worker_start_time,1)            
+                print debug_head+"final model with {} has {} rows [{} secs elapsed]".format(uniprot,len(model_df.index),ce)
+            var_model_df = model_df.merge(variant_table,how='inner',on=['transcript_position'])
+            var_model_df = var_model_df[var_model_df['structure_position']!=' ']
+            var_model_df.sort_values(by = ["structure","chain","transcript_position",
+                                         "structure_position","icode","varcode"],inplace=True)     
+            if debug:
+                ce = round(time.time()-worker_start_time,1)            
+                print debug_head+"final model var with {} has {} rows [{} secs elapsed]".format(uniprot,len(var_model_df.index),ce)
+            alntables.append([model_df,ALN_STRUCT_HEADER])
+            vartables.append([var_model_df,var_df_header])
+    except NoModelException as e:
+        pass
+    except WorkerException as e:
+        if debug:
+            print debug_head+"custom model worker exception {} {}: {}".format(current_transcript,uniprot,e.fullmsg)
+        if multiproc:
+            lock.acquire()
+        IO.write_failures([current_transcript, uniprot], e.fullmsg)          
+        if multiproc:
+            lock.release()        
+    except AlignException as e:
+        if debug:
+            print debug_head+"custom model align exception {} {}: {}".format(current_transcript,uniprot,e.fullmsg)    
+        if multiproc:
+            lock.acquire()
+        IO.write_failures([current_transcript, uniprot], e.fullmsg)
+        if multiproc:
+            lock.release()
+        return False
+    except Exception as e:
+        if debug:
+            print debug_head+"custom model worker uncaught exception {} {}: {}".format(current_transcript,uniprot,e)
+        if multiproc:
+            lock.acquire()
+        IO.write_failures([current_transcript, uniprot], traceback.format_exc())
+        if multiproc:
+            lock.release()
+        return False                                          
                 
     # Finished alignments, now add descriptors and write tables
     if len(arguments.descriptors)>0:

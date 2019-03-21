@@ -32,6 +32,9 @@ parser.add_argument('--nomodel','-m', action='store_true',
                     help='do not cast to SWISSMODEL structures')
 parser.add_argument('--nouniprot','-u',action='store_true',
                     help = 'do not cast to uniprot sequence. Only matters with models.')                    
+parser.add_argument('--list','-l',type=str,default=None,
+                    help='list of local models: each line is transcript[tab]full_path_to_model.pdb.\
+                         accepts multiple transcripts, one model per line')
 parser.add_argument('--completed','-c',action='store_false',default=True,
                     help='suppress continuing later through completed file')
 parser.add_argument('--num_procs','-n',type=int,default=1,
@@ -58,7 +61,7 @@ parser.add_argument('--debug','-x',action='store_true',
 
 args = parser.parse_args()
 
-assert not (args.nomodel and args.nopdb), \
+assert not (args.nomodel and args.nopdb and args.list is None), \
     "You've selected neither PDB nor models, my job is done."
 
 # Process the descriptors
@@ -137,6 +140,14 @@ try:
 except ParseException as e:
     sys.exit(e.fullmsg)  
 
+# Load any custom models
+if args.list is not None:
+    assert path.isfile(args.list), "Unable to find model list file {}. Fix or remove -l flag".format(args.list)
+    datasets['custom_models'] = load_models("custom", args.list)
+else:
+    # Initialize as empty so that list argument never needs to be checked again
+    datasets['custom_models'] = dict()
+
 if not (args.nouniprot and args.nopdb):
     datasets['uniprots'] = load_uniprot()
     variants,ec = filter_sequences(variants,'uniprots',datasets,args.debug)
@@ -157,7 +168,8 @@ if not (args.nomodel):
 # Clear the previous files if continue from completed turned off
 if not args.completed:
     remove_previous_files()
-    
+
+# Setup complete, run main program    
 succ = cast_variants(variants,datasets,args)
 print "Complete: {} transcripts successfully aligned".format(succ)
 

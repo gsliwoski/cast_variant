@@ -259,8 +259,12 @@ def process_variant(variant,expand,debug):
     debug_head = "DEBUG: IO: process_variant: "
     if debug:
         print debug_head+"processing line {}".format(variant)
-    if variant[-2].upper() in [""," ","-", ".","?","NA","NONE","UNASSIGNED"]:
-        return ["no uniprot assigned"]
+# Now that custom models can be used it does not check for uniprot assignment since they are not needed
+# Instead this is checked during variant processing and any missing uniprots that can't be found
+# Are assigned to transcript
+#    if variant[-2].upper() in [""," ","-", ".","?","NA","NONE","UNASSIGNED"]:
+#        return ["no uniprot assigned"]
+
     annotation = variant[0].upper().replace(" ","_")
     # Anything can pair with NMD so skip those immediately
     if "NMD" in annotation or "NONSENSE_MEDIATED_DECAY" in annotation:
@@ -326,7 +330,7 @@ def process_variant(variant,expand,debug):
         print debug_head+"Formatted variant to {} {}/{} {}".format(position,refaa,altaa,annotation)        
     return [position,refaa,altaa,annotation]
 
-def get_uniprot_from_canonical(trans, canonical, debug):
+def get_uniprot_from_transcript(trans, canonical, secondary, debug):
     '''
     Gets all uniprots assigned to given transcript
     Only provides one isoform, based on priority:
@@ -415,7 +419,7 @@ def parse_varfile(varfile,args):
                 raise ParseWarning("variant_file","incomplete line: {}".format(
                                                "\t".join(line)))
             consequence,trans,pos,var,protein,unp,iso = line[:7]
-            if unp.strip() == "":
+            if unp.strip().upper() in [""," ","-", ".","?","NA","NONE","UNASSIGNED"]:
                 if canonical_uniprot is None:
                     canonical_uniprot = load_canonical(debug)
                     canonical_uniprot = canonical_uniprot[~pd.isnull(canonical_uniprot.Canonical)]
@@ -797,11 +801,32 @@ def load_sifts():
     return sifts
 
 # Load model mappings
-def load_models(source):
+def load_models(source, listfile = None):
     if source=="swissmodel":
         infile = open_seqfile(CONFIG['SWISS_SEQ'])
         models = pickle.load(infile)
         print "loaded {} swissmodel uniprots".format(len(models))
+    elif source=="custom":
+        models = dict()
+        n = 0
+        try:
+            with open(listfile) as infile:
+                for line in infile:
+                    line = line.strip().split('\t')
+                    if len(line)<2: continue
+                    if not path.isfile(line[1]):
+                        print "WARNING: {} from model list not found! SKIPPING!".format(line[1])
+                    elif line[0] not in models:
+                        models[line[0]] = [line[1]]
+                        n += 1           
+                    else:
+                        models[line[0]].append(line[1])
+                        n += 1
+            if len(models.keys()) == 0:
+                sys.exit("No usable models in list. Either fix or remove -l flag")
+        except IOError:
+            sys.exit("Model list failed to open. Remove -l flag or fix it")
+        print "{} total models loaded from {}".format(n,listfile)
     else:
         sys.exit("Critical: unrecognized model-type {}".format(source))
     return models
@@ -982,7 +1007,7 @@ def remove_previous_files():
 
 parser = PDB.PDBParser(PERMISSIVE=1)
 
-def load_model(modelfile,debug):
+def load_model(modelfile,debug, complex_state = None):
     '''Loads the model file and generates a fasta
        with dashes for any skipped residue #'s
        Takes a filename and returns a dict with
@@ -995,7 +1020,8 @@ def load_model(modelfile,debug):
     if debug:
         print debug_head+"Loading model {}".format(modelfile)
     structure = parser.get_structure("Model",modelfile)
-    complex_state = model_information(modelfile)
+    if complex_state is None:
+        complex_state = model_information(modelfile)
     if debug:
         print debug_head+"model has complex_state: {}".format(complex_state)
     # I'm assuming that all chains in a model are of the target protein

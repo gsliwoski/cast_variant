@@ -256,6 +256,11 @@ def filter_sequences(variants,destination,datasets,debug):
         elif destination=='uniprots' and variants[var][0][0] not in datasets['uniprots']:
             IO.write_failures(
                 [var,variants[var][0][0]],"no unp seq found for {}".format(variants[var][0][0]))
+            # Only transcript sequence is required for custom models, if unp missing, give it transcript
+            print variants[var]
+            if variants[var] in datasets['custom_models']:
+                datasets['uniprot'][variants[var][0][0]] = datasets['custom_models'][var]
+                continue
             completed += varcodes
             if debug:
                 debug_set.add(var+"_"+variants[var][0][0])

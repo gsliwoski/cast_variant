@@ -48,4 +48,23 @@ class DescriptorException(Exception):
         self.args = (source,msg)
         self.source = source
         self.msg = msg
-        self.fullmsg = "descriptor gen failure: {} {}".format(source,msg)        
+        self.fullmsg = "descriptor gen failure: {} {}".format(source,msg)
+
+class NoModelException(Exception):
+    '''
+    No custom models match (avoids writing as error since expected to be common
+    '''
+    def __init__(self):
+        self.msg = 'no custom model for transcript'
+        self.fullmsg = self.msg
+
+class CustomModelException(Exception):
+    '''
+    Failed to load a custom model, report this because it is unusual
+    '''
+    def __init__(self, source, msg):
+        self.args = (source, msg)
+        self.source = source
+        self.msg = msg
+        self.fullmsg = "Custom model loading gen failure: {} {}".format(source,msg)
+                
