@@ -161,6 +161,8 @@ Note: in-frame deletions have alternate amino acid '-' for deleted residues; fra
 
 **--nouniprot,-u** = only relevant for casting to models since PDB casting uses SIFTS which relies on uniprot sequence. This is so you still get the uniprot positions if you cast to a  model which is done directly.
 
+**--list,-l FILENAME** = include a set of local models not part of SWISSMODEL. Filename contains list of all models (one per line) with transcript[tab]full_path_file.pdb. This accepts any number of unique transcripts. Note, this hasn't been thoroughly tested but appears to work.
+
 **--completed,-c** = suppress continue function. By default, a .completed file is created which tracks which variants have already been cast so, in case of interruption, can continue from where it left off.
 
 **--num_procs \#, -n \#** = number of multiprocesses to run. Default = 1
@@ -215,6 +217,16 @@ The following features are known and not used for any category either because th
 chain, peptide, domain, repeat, coiled coil, coiled-coil region, compositional bias, non-standard residue, alternative sequence, natural variant, mutagenesis, mutagenesis site, sequence uncertainty, sequence conflict, non-adjacent residues, non-terminal residues, helix, turn, beta strand, strand, sequence variant, splice variant, compositionally biased region, zinc finger region, non-standard amino acid, non-terminal residue, topological domain, region, region of interest, non-consecutive residues
 
 Note: for any features that are defined by start and end residues, all residues in between are flagged. Disulfide bonds are flagged for both cysteines involved.
+
+### Custom local models
+
+If user wants to map to any local models not part of SWISSMODEL, must list all models (one per line) in a TAB delimited file in format
+
+Transcript1  Full_model_path1.pdb
+Transcript1  Full_model_path2.pdb
+Transcript2  Full_model_path3.pdb
+
+Note this hasn't been thoroughly tested but has worked so far.
 
 ### Results
 
